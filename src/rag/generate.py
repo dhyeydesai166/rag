@@ -56,3 +56,6 @@ def generate(question: str, kind: str, hits: list, model) -> str:
         text = model.generate(f"Question: {question}\n\n{body}", system=SYSTEM)
     log("generate", f"kind={kind} hits={len(hits)}")
     return f"{text.strip()}\n\n{citations(kind, hits)}"
+
+
+# TODO: Add LLM as judge before entering enterprise

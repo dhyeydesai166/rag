@@ -102,6 +102,9 @@ def chunk(blocks: list[dict], policy: str, version: str, source: str) -> list[di
     return records
 
 
+# TODO: Switch from structural to heirarchical chunking as corpus grows, foundations baked into the code already
+
+
 def chunk_path(path: Path | str, blocks: list[dict]) -> list[dict]:
     path = Path(path)
     policy, version = policy_and_version(path)

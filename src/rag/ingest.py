@@ -11,6 +11,9 @@ from rag.validate import validate
 SUFFIXES = {".pdf", ".docx"}
 
 
+# TODO: Add support for .md filetype
+
+
 def ingest(directory, embedder, database, read_file=read, chunk_file=chunk_path):
     directory = Path(directory)
     if not directory.is_dir():

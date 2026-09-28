@@ -76,6 +76,7 @@ def candidates(rows: list[dict], pairs: list[tuple]) -> list[dict]:
 
 
 def cosine(left: list[float], right: list[float]) -> float:
+    # TODO: switch this from simple cosine to hnsw as corpus grows, foundations baked into code but not implemented
     if not left or not right or len(left) != len(right):
         return 0.0
     dot = sum(a * b for a, b in zip(left, right, strict=True))
@@ -279,6 +280,7 @@ def compare(question, vector, rows, policies, policy, reranker, n):
     versions = policies[policy]
     latest = versions[-1]
     previous = versions[-2] if len(versions) > 1 else None
+    # TODO: This always compares only to one version before, even on explicit request it diffs only to previous version, fix it
     current_rows = candidates(rows, [(policy, latest)])
     previous_rows = [] if previous is None else candidates(rows, [(policy, previous)])
     log("retrieve", f"candidates={len(current_rows) + len(previous_rows)}")
