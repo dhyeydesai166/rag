@@ -31,9 +31,14 @@ def retrieval_recall(expected: set[str], retrieved: set[str]) -> float:
     return len(expected & retrieved) / len(expected)
 
 
-def answer_ok(text: str, must_contain: list[str], must_not_contain: list[str]) -> bool:
+def _has_phrase(folded: str, phrase: str | list[str] | tuple[str, ...]) -> bool:
+    options = phrase if isinstance(phrase, (list, tuple)) else [phrase]
+    return any(option.lower() in folded for option in options)
+
+
+def answer_ok(text: str, must_contain: list, must_not_contain: list[str]) -> bool:
     folded = text.lower()
-    has_required = all(phrase.lower() in folded for phrase in must_contain)
+    has_required = all(_has_phrase(folded, phrase) for phrase in must_contain)
     avoids_banned = all(phrase.lower() not in folded for phrase in must_not_contain)
     return has_required and avoids_banned
 

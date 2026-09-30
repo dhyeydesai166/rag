@@ -3,7 +3,7 @@ from pathlib import Path
 
 EMBED_MODEL = "embeddinggemma:latest"
 ROUTE_MODEL = "gemma3:4b"
-GENERATE_MODEL = "gemma3:12b"
+GENERATE_MODEL = os.environ.get("GENERATE_MODEL", "gemma3:12b")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 CHROMA_PATH = "chroma"
 COLLECTION_NAME = "policies"

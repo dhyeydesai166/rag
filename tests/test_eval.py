@@ -62,6 +62,11 @@ def test_answer_ok_requires_phrases_and_rejects_banned_ones():
     assert answer_ok("Issued 500,000 tokens.", ["500,000"], ["two million"])
     assert not answer_ok("Issued tokens.", ["500,000"], [])
     assert not answer_ok("500,000 tokens over six hours.", ["500,000"], ["six hours"])
+    assert answer_ok(
+        "Employees get 7 paid days off.",
+        [["7 days", "7 paid days"]],
+        ["unpaid"],
+    )
 
 
 def test_aggregate_macro_averages_each_question():

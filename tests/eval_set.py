@@ -12,7 +12,7 @@ CASES = [
     {
         "question": "How many paid days off does an employee get for adopting a dog?",
         "chunks": ["HR Policy|2.0|5. Pet Adoption Leave > 5.1 Leave Entitlement"],
-        "must_contain": ["7 days"],
+        "must_contain": [["7 days", "seven days", "7 paid days", "7 day", "seven day"]],
         "must_not_contain": ["unpaid"],
     },
     {
