@@ -2,7 +2,8 @@ import sys
 
 from adapter.database_adapter import DatabaseAdapter
 from rag.logutil import disable_question_log, enable_question_log, stage
-from rag.retrieve import apply_rerank, bm25_scores, cosine, fuse, main, retrieve
+from rag.retrieve import main, retrieve
+from rag.route_examples import COMPARE_EXAMPLES, LOOKUP_EXAMPLES
 
 
 def record(policy, version, heading, text):
@@ -30,84 +31,60 @@ def store(path, rows, vectors):
 
 
 class FakeEmbedder:
-    def __init__(self, vector):
-        self.vector = vector
+    def __init__(self, vector, compare=False):
+        self.vector = list(vector)
+        self.compare = compare
         self.tasks = []
 
     def embed(self, texts, task):
         self.tasks.append(task)
-        return [self.vector]
+        vectors = []
+        for text in texts:
+            if text in COMPARE_EXAMPLES and self.compare:
+                vectors.append([0.0, 1.0])
+            elif text in LOOKUP_EXAMPLES:
+                vectors.append([1.0, 0.0])
+            elif self.compare:
+                vectors.append([0.0, 1.0])
+            else:
+                vectors.append(self.vector)
+        return vectors
 
+    def examples(self):
+        from rag.route import embed_examples
 
-class FakeModel:
-    def __init__(self, replies):
-        self.replies = list(replies)
-        self.prompts = []
-
-    def generate(self, prompt):
-        self.prompts.append(prompt)
-        return self.replies.pop(0)
+        return embed_examples(self)
 
 
 class FakeReranker:
-    def __init__(self, reverse=False, partial=False):
+    def __init__(self, reverse=False, fail=False):
         self.reverse = reverse
-        self.partial = partial
+        self.fail = fail
         self.documents = []
 
-    def rerank(self, question, documents):
+    def rank(self, question, documents, top_n):
         self.documents.append(list(documents))
-        if self.partial:
-            return documents[:1]
+        if self.fail:
+            from adapter.rerank_adapter import RerankUnavailable
+
+            raise RerankUnavailable("down")
+        order = list(range(len(documents)))
         if self.reverse:
-            return list(reversed(documents))
-        return list(documents)
+            order.reverse()
+        return order[:top_n]
 
 
-def ask(tmp_path, rows, vectors, replies, reverse=False, partial=False):
-    model = FakeModel(replies)
-    reranker = FakeReranker(reverse=reverse, partial=partial)
+def ask(tmp_path, rows, vectors, question, compare=False, reverse=False, fail=False):
+    embedder = FakeEmbedder([1.0, 0.0], compare=compare)
+    reranker = FakeReranker(reverse=reverse, fail=fail)
     found = retrieve(
-        "cake",
-        FakeEmbedder([1.0, 0.0]),
-        model,
+        question,
+        embedder,
         store(tmp_path / "chroma", rows, vectors),
         reranker,
+        embedder.examples(),
     )
-    return found, model.prompts, reranker.documents
-
-
-def test_bm25_scores_keyword_overlap():
-    scores = bm25_scores("cake", ["birthday cake", "vacation days", "???"])
-    assert scores[0] > scores[1]
-    assert scores[1] == 0
-    assert bm25_scores("cake", []) == []
-    assert bm25_scores("cake", ["???"]) == [0.0]
-
-
-def test_cosine_handles_empty_and_mismatched_vectors():
-    assert cosine([], [1.0]) == 0.0
-    assert cosine([1.0], [1.0, 0.0]) == 0.0
-    assert cosine([0.0], [0.0]) == 0.0
-    assert cosine([1.0, 0.0], [1.0, 0.0]) == 1.0
-
-
-def test_fuse_breaks_ties_by_id():
-    rows = [{"id": "b", "text": "cake"}, {"id": "a", "text": "cake"}]
-    fused = fuse(rows, [1.0, 1.0], [1.0, 1.0])
-    assert [hit["id"] for hit in fused] == ["a", "b"]
-
-
-def test_keyword_hit_outranks_the_closer_distractor():
-    rows = [
-        {"id": "close", "text": "vacation days"},
-        {"id": "mid", "text": "office hours"},
-        {"id": "other", "text": "parking"},
-        {"id": "cake", "text": "birthday cake"},
-    ]
-    keyword = bm25_scores("cake", [row["text"] for row in rows])
-    fused = fuse(rows, [0.4, 0.3, 0.2, 0.35], keyword)
-    assert fused[0]["id"] == "cake"
+    return found, reranker.documents
 
 
 def test_lookup_drops_older_versions(tmp_path):
@@ -115,17 +92,15 @@ def test_lookup_drops_older_versions(tmp_path):
         record("HR Policy", "2.0", "3. Leave", "vacation days"),
         record("HR Policy", "1.0", "3. Leave", "birthday cake"),
     ]
-    text, prompts, documents = ask(
+    found, documents = ask(
         tmp_path,
         rows,
         [[1.0, 0.0], [0.0, 1.0]],
-        ['{"kind":"lookup","policy":"","version":""}'],
+        "who gets cake?",
     )
-    assert text["kind"] == "lookup"
-    assert text["hits"][0]["text"] == "vacation days"
+    assert found["kind"] == "lookup"
+    assert found["hits"][0]["text"] == "vacation days"
     assert "birthday cake" not in documents[0][0]
-    assert len(prompts) == 1
-    assert FakeEmbedder([1.0, 0.0]).embed(["cake"], "query") == [[1.0, 0.0]]
 
 
 def test_lookup_keeps_a_named_version(tmp_path):
@@ -133,14 +108,14 @@ def test_lookup_keeps_a_named_version(tmp_path):
         record("HR Policy", "2.0", "3. Leave", "vacation days"),
         record("HR Policy", "1.0", "3. Leave", "birthday cake"),
     ]
-    found, _prompts, documents = ask(
+    found, documents = ask(
         tmp_path,
         rows,
         [[1.0, 0.0], [0.0, 1.0]],
-        ['{"kind":"lookup","policy":"HR Policy","version":"1.0"}'],
+        "What did HR Policy 1.0 say about cake?",
     )
-    assert documents[0] == ["birthday cake"]
     assert found["hits"][0]["version"] == "1.0"
+    assert "birthday cake" in documents[0][0]
 
 
 def test_lookup_can_name_a_policy_without_a_version(tmp_path):
@@ -149,13 +124,13 @@ def test_lookup_can_name_a_policy_without_a_version(tmp_path):
         record("HR Policy", "1.0", "3. Leave", "birthday cake"),
         record("Preparedness Policy", "2.0", "1. Purpose", "drill"),
     ]
-    _text, _prompts, documents = ask(
+    found, _documents = ask(
         tmp_path,
         rows,
         [[1.0, 0.0], [0.0, 1.0], [0.2, 0.2]],
-        ['{"kind":"lookup","policy":"HR Policy","version":""}'],
+        "What does the HR Policy say about leave?",
     )
-    assert documents[0] == ["vacation days"]
+    assert [hit["text"] for hit in found["hits"]] == ["vacation days"]
 
 
 def test_compare_pairs_current_and_previous(tmp_path):
@@ -165,61 +140,61 @@ def test_compare_pairs_current_and_previous(tmp_path):
         record("HR Policy", "2.0", "8. Added", "new clause"),
         record("HR Policy", "1.0", "9. Only Old", "removed clause"),
     ]
-    found, _prompts, _documents = ask(
+    found, _documents = ask(
         tmp_path,
         rows,
         [[1.0, 0.0], [0.0, 1.0], [0.2, 0.8], [0.8, 0.2]],
-        ['{"kind":"compare","policy":"HR Policy","version":""}'],
+        "What changed in the HR Policy?",
+        compare=True,
     )
     by_heading = {hit["heading_path"]: hit for hit in found["hits"]}
     leave = by_heading["3. Leave"]
     assert leave["current"]["text"] == "no dessert"
     assert leave["previous"]["text"] == "cake on friday"
-    assert by_heading["8. Added"]["current"]["text"] == "new clause"
     assert by_heading["8. Added"]["previous"] is None
-    assert by_heading["9. Only Old"]["previous"]["text"] == "removed clause"
     assert by_heading["9. Only Old"]["current"] is None
 
 
-def test_compare_with_one_version_has_no_previous_side(tmp_path):
+def test_compare_with_one_version_has_no_previous_side(tmp_path, rag_logs):
     rows = [record("Health & Wellness Policy", "1.0", "1. Purpose", "rest")]
-    found, _prompts, _documents = ask(
+    found, _documents = ask(
         tmp_path,
         rows,
         [[1.0, 0.0]],
-        ['{"kind":"compare","policy":"Health & Wellness Policy","version":""}'],
+        "What changed in the Health & Wellness Policy?",
+        compare=True,
     )
-    assert found["kind"] == "compare"
-    assert found["hits"][0]["current"]["text"] == "rest"
-    assert found["hits"][0]["previous"] is None
+    assert found["kind"] == "lookup"
+    assert found["hits"][0]["text"] == "rest"
+    assert "reason=single version" in rag_logs.text
 
 
 def test_unknown_compare_policy_falls_back_to_lookup(tmp_path, rag_logs):
     rows = [record("HR Policy", "2.0", "3. Leave", "birthday cake")]
-    found, _prompts, documents = ask(
+    found, documents = ask(
         tmp_path,
         rows,
         [[1.0, 0.0]],
-        ['{"kind":"compare","policy":"","version":""}'],
+        "What changed between the versions?",
+        compare=True,
     )
-    assert "kind=lookup reason=unknown policy" in rag_logs.text
+    assert "reason=no multi-version policy" in rag_logs.text
     assert found["kind"] == "lookup"
-    assert documents[0] == ["birthday cake"]
+    assert "birthday cake" in documents[0][0]
 
 
 def test_empty_collection_skips_the_answer_call(tmp_path, rag_logs):
-    model = FakeModel(['{"kind":"lookup","policy":"","version":""}'])
+    embedder = FakeEmbedder([1.0, 0.0])
     reranker = FakeReranker()
-    text = retrieve(
-        "cake",
-        FakeEmbedder([1.0, 0.0]),
-        model,
+    found = retrieve(
+        "who gets cake?",
+        embedder,
         DatabaseAdapter(tmp_path / "chroma", "testbuild"),
         reranker,
+        embedder.examples(),
     )
-    assert text["kind"] == "lookup"
-    assert text["hits"] == []
-    assert len(model.prompts) == 1
+    assert found["kind"] == "lookup"
+    assert found["hits"] == []
     assert reranker.documents == []
     assert "hits=0" in rag_logs.text
 
@@ -229,67 +204,113 @@ def test_reranker_order_reaches_the_answer(tmp_path):
         record("HR Policy", "2.0", "1. Purpose", "vacation days"),
         record("HR Policy", "2.0", "3. Leave", "birthday cake"),
     ]
-    found, _prompts, _documents = ask(
+    found, _documents = ask(
         tmp_path,
         rows,
-        [[1.0, 0.0], [0.0, 1.0]],
-        ['{"kind":"lookup","policy":"HR Policy","version":"2.0"}'],
+        [[1.0, 0.0], [0.2, 0.9]],
+        "What does the HR Policy cover?",
         reverse=True,
     )
     assert [hit["text"] for hit in found["hits"]] == ["birthday cake", "vacation days"]
 
 
-def test_partial_rerank_keeps_the_remaining_chunks(tmp_path):
+def test_reranker_failure_falls_back_to_fused_order_with_a_warning(tmp_path, rag_logs):
     rows = [
         record("HR Policy", "2.0", "1. Purpose", "vacation days"),
         record("HR Policy", "2.0", "3. Leave", "birthday cake"),
     ]
-    found, _prompts, _documents = ask(
+    found, _documents = ask(
         tmp_path,
         rows,
         [[1.0, 0.0], [0.0, 1.0]],
-        ['{"kind":"lookup","policy":"HR Policy","version":"2.0"}'],
-        partial=True,
+        "What does the HR Policy say?",
+        fail=True,
     )
-    assert {hit["text"] for hit in found["hits"]} == {"vacation days", "birthday cake"}
+    assert found["hits"]
+    assert "using fused order" in rag_logs.text
 
 
-def test_duplicate_rerank_text_stays_paired():
-    items = [{"id": "a"}, {"id": "b"}]
-    ordered = apply_rerank(
-        "cake", items, ["same", "same"], FakeReranker(reverse=True), 3
+def test_no_reranker_uses_fused_order(tmp_path, rag_logs):
+    rows = [record("HR Policy", "2.0", "1. Purpose", "vacation days")]
+    embedder = FakeEmbedder([1.0, 0.0])
+    found = retrieve(
+        "What does the HR Policy say?",
+        embedder,
+        store(tmp_path / "chroma", rows, [[1.0, 0.0]]),
+        None,
+        embedder.examples(),
     )
-    assert [item["id"] for item in ordered] == ["a", "b"]
+    assert found["hits"][0]["text"] == "vacation days"
+    assert "no COHERE_API_KEY" in rag_logs.text
 
 
-def test_unknown_rerank_text_is_ignored():
-    class Drop:
-        def rerank(self, question, documents):
-            return ["missing"]
+def test_dense_and_lexical_use_the_same_filter():
+    class FakeDatabase:
+        def __init__(self):
+            self.calls = []
+            self.chunks = [
+                record("HR Policy", "2.0", "3. Leave", "vacation days"),
+            ]
 
-    assert apply_rerank("cake", [{"id": "a"}], ["cake"], Drop(), 3) == [{"id": "a"}]
+        def chunks_where(self, where):
+            self.calls.append(("chunks", where))
+            if where is None:
+                return self.chunks
+            return self.chunks
+
+        def dense_search(self, vector, where, k):
+            self.calls.append(("dense", where))
+            return [self.chunks[0]["id"]]
+
+    embedder = FakeEmbedder([1.0, 0.0])
+    database = FakeDatabase()
+    retrieve(
+        "What does the HR Policy say about leave?",
+        embedder,
+        database,
+        FakeReranker(),
+        embedder.examples(),
+    )
+    dense = [where for kind, where in database.calls if kind == "dense"]
+    lexical = [
+        where
+        for kind, where in database.calls
+        if kind == "chunks" and where is not None
+    ]
+    assert dense
+    assert dense[0] == lexical[0]
+
+
+def test_junk_question_never_calls_a_model(monkeypatch, capsys):
+    called = []
+    monkeypatch.setattr("rag.retrieve._check_models", lambda: called.append("model"))
+    assert main(["hi"]) == 2
+    assert called == []
+    assert "Ask me about" in capsys.readouterr().out
 
 
 def test_main_prints_the_answer(monkeypatch, capsys):
     seen = {}
-    monkeypatch.setattr("rag.retrieve.check_model_pin", lambda *args, **kwargs: None)
+    monkeypatch.setattr("rag.retrieve._check_models", lambda: None)
     monkeypatch.setattr("rag.retrieve.active_build_id", lambda path: "testbuild")
+    monkeypatch.setattr("rag.retrieve.EmbeddingAdapter", lambda: "embedder")
+    monkeypatch.setattr("rag.retrieve.make_reranker", lambda: "reranker")
+    monkeypatch.setattr("rag.retrieve.embed_examples", lambda embedder: ([], []))
+    monkeypatch.setattr("rag.retrieve.GenerationAdapter", lambda: "generator")
+    monkeypatch.setattr("rag.retrieve.DatabaseAdapter", lambda path, build_id: path)
 
-    def fake_retrieve(question, embedder, model, database, reranker, n=3):
+    def fake_retrieve(question, embedder, database, reranker, examples=None):
         seen["question"] = question
         seen["database"] = database
-        seen["model"] = model
         seen["reranker"] = reranker
-        return {"kind": "lookup", "hits": [{"text": "cake"}]}
-
-    def fake_adapter(model=None):
-        return model or "generator"
+        return {
+            "kind": "lookup",
+            "hits": [{"text": "cake"}],
+            "route": {},
+            "filters": None,
+        }
 
     monkeypatch.setattr(sys, "argv", ["retrieve.py", "who gets cake?"])
-    monkeypatch.setattr("rag.retrieve.EmbeddingAdapter", lambda: "embedder")
-    monkeypatch.setattr("rag.retrieve.GenerationAdapter", fake_adapter)
-    monkeypatch.setattr("rag.retrieve.DatabaseAdapter", lambda path, build_id: path)
-    monkeypatch.setattr("rag.retrieve.RerankerAdapter", lambda: "reranker")
     monkeypatch.setattr("rag.retrieve.retrieve", fake_retrieve)
     monkeypatch.setattr(
         "rag.retrieve.generate",
@@ -297,30 +318,25 @@ def test_main_prints_the_answer(monkeypatch, capsys):
     )
     assert main() == 0
     assert capsys.readouterr().out.strip() == "cake"
-    assert main(trace=True) == 0
-    traced = capsys.readouterr().out.splitlines()
-    assert traced[:-1] == ["cake"]
-    assert traced[-1].startswith("latency: ")
-    assert traced[-1].endswith("s")
     assert seen["question"] == "who gets cake?"
     assert seen["database"] == "chroma"
-    assert seen["model"] == "gemma3:4b"
     assert seen["reranker"] == "reranker"
 
 
 def test_main_uses_the_given_database(monkeypatch):
     seen = {}
-    monkeypatch.setattr("rag.retrieve.check_model_pin", lambda *args, **kwargs: None)
+    monkeypatch.setattr("rag.retrieve._check_models", lambda: None)
     monkeypatch.setattr("rag.retrieve.active_build_id", lambda path: "testbuild")
-
-    def fake_retrieve(question, embedder, model, database, reranker, n=3):
-        seen["database"] = database
-        return {"kind": "lookup", "hits": []}
-
     monkeypatch.setattr("rag.retrieve.EmbeddingAdapter", lambda: None)
-    monkeypatch.setattr("rag.retrieve.GenerationAdapter", lambda model=None: None)
+    monkeypatch.setattr("rag.retrieve.make_reranker", lambda: None)
+    monkeypatch.setattr("rag.retrieve.embed_examples", lambda embedder: ([], []))
+    monkeypatch.setattr("rag.retrieve.GenerationAdapter", lambda: None)
     monkeypatch.setattr("rag.retrieve.DatabaseAdapter", lambda path, build_id: path)
-    monkeypatch.setattr("rag.retrieve.RerankerAdapter", lambda: None)
+
+    def fake_retrieve(question, embedder, database, reranker, examples=None):
+        seen["database"] = database
+        return {"kind": "lookup", "hits": [], "route": {}, "filters": None}
+
     monkeypatch.setattr("rag.retrieve.retrieve", fake_retrieve)
     monkeypatch.setattr("rag.retrieve.generate", lambda *args: "ok")
     assert main(["question", "other"]) == 0

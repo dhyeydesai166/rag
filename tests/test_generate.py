@@ -118,11 +118,8 @@ def test_generate_skips_the_model_when_there_are_no_hits():
     assert model.calls == []
 
 
-def test_one_model_records_the_route_prompt_and_the_answer_prompt():
-    from rag.router import route
-
+def test_generate_sends_the_answer_prompt():
     model = RecordingModel()
-    route("what changed?", model, {"HR Policy": ("1.0", "2.0")})
     generate(
         "what changed?",
         "lookup",
@@ -136,7 +133,5 @@ def test_one_model_records_the_route_prompt_and_the_answer_prompt():
         ],
         model,
     )
-    assert model.calls[0]["system"] is None
-    assert "Question:" in model.calls[0]["prompt"]
-    assert model.calls[1]["system"] == SYSTEM
-    assert "Question: what changed?" in model.calls[1]["prompt"]
+    assert model.calls[0]["system"] == SYSTEM
+    assert "Question: what changed?" in model.calls[0]["prompt"]

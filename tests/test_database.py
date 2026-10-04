@@ -41,19 +41,21 @@ def test_upsert_is_idempotent_and_keeps_metadata(tmp_path):
     assert stored["documents"][0] == "Purpose body"
 
 
-def test_rows_returns_text_metadata_and_vector(tmp_path):
+def test_chunks_where_returns_text_and_metadata_without_vectors(tmp_path):
     database = DatabaseAdapter(tmp_path / "chroma", BUILD)
     database.upsert([_record()], [[0.25, 0.75]])
-    stored = database.rows()
+    stored = database.chunks_where(None)
     assert stored[0]["text"] == "Purpose body"
     assert stored[0]["policy"] == "HR Policy"
     assert stored[0]["word_count"] == 2
-    assert stored[0]["vector"] == [0.25, 0.75]
+    assert "vector" not in stored[0]
     assert stored[0]["ordinal"] is None
+    vectors = database.vectors_by_embed_sha(["embed-HR Policy|1.0|1. Purpose"])
+    assert vectors["embed-HR Policy|1.0|1. Purpose"] == [0.25, 0.75]
 
 
-def test_rows_on_an_empty_collection(tmp_path):
-    assert DatabaseAdapter(tmp_path / "chroma", BUILD).rows() == []
+def test_chunks_where_on_an_empty_collection(tmp_path):
+    assert DatabaseAdapter(tmp_path / "chroma", BUILD).chunks_where(None) == []
 
 
 def test_delete_ids_removes_only_those_chunks(tmp_path):

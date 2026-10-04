@@ -342,6 +342,8 @@ six==1.17.0
     # via
     #   kubernetes
     #   python-dateutil
+snowballstemmer==3.1.1
+    # via doofenshmirtz-evil-incorporated-rag (pyproject.toml)
 soupsieve==2.10
     # via beautifulsoup4
 sqlalchemy[asyncio]==2.1.3

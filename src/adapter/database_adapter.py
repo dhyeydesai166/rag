@@ -110,24 +110,6 @@ class DatabaseAdapter:
         if self.name in names:
             self.client.delete_collection(self.name)
 
-    def rows(self) -> list[dict]:
-        stored = self.collection.get(include=["documents", "metadatas", "embeddings"])
-        embeddings = stored.get("embeddings")
-        records = []
-        for index, record_id in enumerate(stored["ids"]):
-            chunk = self._one(
-                record_id,
-                stored["documents"][index],
-                stored["metadatas"][index],
-            )
-            vector = None if embeddings is None else embeddings[index]
-            chunk["vector"] = (
-                [] if vector is None else [float(value) for value in vector]
-            )
-            records.append(chunk)
-        log("database", f"path={self.path} rows={len(records)}")
-        return records
-
     def _chunks(self, stored: dict) -> list[dict]:
         documents = stored.get("documents") or []
         metadatas = stored.get("metadatas") or []

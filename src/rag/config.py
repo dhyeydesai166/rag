@@ -9,8 +9,6 @@ EMBED_MODEL_DIGEST = "85462619ee72"
 # embeddinggemma returns 768-dim vectors; a mismatch means a different model.
 EMBED_DIM = 768
 
-# Small model used only by the legacy LLM router. Removed when routing moves to code.
-ROUTE_MODEL = "gemma3:4b"
 # Default answer model; CI overrides with the smaller gemma3:4b for speed.
 GENERATE_MODEL = os.environ.get("GENERATE_MODEL", "gemma3:12b")
 # Allowed answer models and their digests (ID column of `ollama list`).
@@ -45,13 +43,67 @@ SENTENCE_ABBREVIATIONS = ("a.m.", "p.m.", "e.g.", "i.e.", "etc.", "vs.", "No.")
 # The corpus is about 100 chunks today.
 EMBED_BATCH_SIZE = 64
 
+# Long enough for any real policy question; longer inputs are usually pasted documents.
+MAX_QUESTION_CHARS = 500
+# Single-word inputs that are greetings or tests, not questions.
+FILLER_WORDS = frozenset(
+    {"hi", "hello", "hey", "ok", "okay", "test", "thanks", "yo", "help"}
+)
+# 'asdfghjkl' has 8 consonants in a row; real English words rarely exceed 5.
+KEYMASH_CONSONANT_RUN = 6
+
+# Ways people name each policy. Bare "health" or "time" also appear inside
+# rules, so they are not aliases.
+POLICY_ALIASES = {
+    "HR Policy": ("hr policy", "hr", "human resources"),
+    "Health & Wellness Policy": (
+        "health & wellness policy",
+        "health and wellness policy",
+        "health & wellness",
+        "health and wellness",
+        "health policy",
+        "wellness policy",
+    ),
+    "Preparedness Policy": ("preparedness policy", "preparedness"),
+    "Time & Usage Policy": (
+        "time & usage policy",
+        "time and usage policy",
+        "time & usage",
+        "time and usage",
+        "usage policy",
+    ),
+}
+# A version is digits with at least one dot, after clean_question.
+VERSION_PATTERN = r"\b\d+\.\d+(?:\.\d+)*\b"
+
+# Compare must beat lookup by this cosine margin. Similarities are only
+# compared within one question, so the scale is local to that question.
+ROUTE_COMPARE_MARGIN = 0.02
+
+# Standard Okapi BM25 defaults; the corpus is too small to tune them.
+BM25_K1 = 1.5
+BM25_B = 0.75
+# Each retriever contributes up to 20 candidates. A policy version has about
+# 15-26 chunks today, so this covers everything now and still bounds work later.
+DENSE_TOP_K = 20
+LEXICAL_TOP_K = 20
+
 # RRF constant from Cormack et al., 2009. Large enough that rank 1 vs rank 2
 # is not a cliff, so one retriever cannot dominate.
 RRF_K = 60
-# Shortlist handed to the reranker. Same size as the previous FUSE_N.
+# Shortlist handed to the reranker: enough to recover from a weak first stage,
+# small enough for one Cohere call.
 FUSED_TOP_K = 20
+
+# Cohere model; recorded in provenance.
+RERANK_MODEL = "rerank-v3.5"
 # Passages the answer model sees: enough for a rule plus its exception.
 RERANK_TOP_N = 3
+# A rerank call normally returns in well under a second; 10s means something is wrong.
+RERANK_TIMEOUT_SECONDS = 10
+# One retry covers a transient blip without making a real outage slow.
+RERANK_RETRIES = 1
+RERANK_RETRY_DELAY_SECONDS = 1.0
 
 
 def read_env(path=".env") -> dict[str, str]:

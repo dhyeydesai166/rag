@@ -1,15 +1,21 @@
-import math
-import re
+"""Clean, filter, route, search, fuse, and rerank a policy question.
+
+Routing and filters are code. The answer model is the only model that
+writes text, and it is called from main after this module returns.
+"""
+
 import sys
 import time
 
 import ollama
 
-from adapter.database_adapter import DatabaseAdapter
+from adapter.database_adapter import DatabaseAdapter, where_for
 from adapter.embedding_adapter import EmbeddingAdapter
 from adapter.generation_adapter import GenerationAdapter
-from adapter.rerank_adapter import RerankerAdapter
+from adapter.rerank_adapter import RerankUnavailable, make_reranker
+from rag.compare import compare_versions, pair_by_title, pair_text
 from rag.config import (
+    DENSE_TOP_K,
     EMBED_MODEL,
     EMBED_MODEL_DIGEST,
     FUSED_TOP_K,
@@ -17,269 +23,203 @@ from rag.config import (
     GENERATE_MODEL_DIGESTS,
     OLLAMA_HOST,
     RERANK_TOP_N,
-    ROUTE_MODEL,
-    RRF_K,
 )
+from rag.filters import catalog_from_chunks, extract_filters, lookup_targets
+from rag.fusion import rrf_fuse
 from rag.generate import generate
+from rag.lexical import bm25_ranked
 from rag.logutil import (
     disable_question_log,
     enable_question_log,
     log,
     silence_console,
     stage,
+    warn,
 )
 from rag.manifest import active_build_id
 from rag.model_pins import check_model_pin
-from rag.reader import version_key
-from rag.router import route
+from rag.question import JunkQuestion, clean_question, junk_reason
+from rag.route import classify_route, embed_examples, route_scores
+from rag.section_map import SECTION_RENAMES
 
 
-def tokens(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", text.lower())
+def rerank_with_fallback(question, items, texts, reranker, keep: int = RERANK_TOP_N):
+    """Reorder the fused shortlist with Cohere; on any failure keep the fused order.
 
-
-def catalog(rows: list[dict]) -> dict:
-    policies = {}
-    for row in rows:
-        policies.setdefault(row["policy"], set()).add(row["version"])
-    return {
-        name: tuple(sorted(versions, key=version_key))
-        for name, versions in policies.items()
-    }
-
-
-def lookup_pairs(policies: dict, policy: str, version: str) -> list[tuple]:
-    if policy and version:
-        return [(policy, version)]
-    if policy:
-        return [(policy, policies[policy][-1])]
-    return [(name, versions[-1]) for name, versions in policies.items()]
-
-
-def candidates(rows: list[dict], pairs: list[tuple]) -> list[dict]:
-    allowed = set(pairs)
-    return [row for row in rows if (row["policy"], row["version"]) in allowed]
-
-
-def cosine(left: list[float], right: list[float]) -> float:
-    # TODO: switch this from simple cosine to HNSW as the corpus grows.
-    if not left or not right or len(left) != len(right):
-        return 0.0
-    dot = sum(a * b for a, b in zip(left, right, strict=True))
-    left_norm = math.sqrt(sum(value * value for value in left))
-    right_norm = math.sqrt(sum(value * value for value in right))
-    if left_norm == 0 or right_norm == 0:
-        return 0.0
-    return dot / (left_norm * right_norm)
-
-
-def cosine_scores(query: list[float], rows: list[dict]) -> list[float]:
-    return [cosine(query, row["vector"]) for row in rows]
-
-
-def bm25_scores(query: str, documents: list[str], k1: float = 1.5, b: float = 0.75):
-    query_terms = tokens(query)
-    docs = [tokens(document) for document in documents]
-    lengths = [len(doc) for doc in docs]
-    average = sum(lengths) / len(lengths) if lengths else 0
-    counts = []
-    document_frequency = {term: 0 for term in set(query_terms)}
-    for doc in docs:
-        count = {}
-        for term in doc:
-            count[term] = count.get(term, 0) + 1
-        counts.append(count)
-        for term in document_frequency:
-            if term in count:
-                document_frequency[term] += 1
-    total = len(docs)
-    scores = []
-    for length, count in zip(lengths, counts, strict=True):
-        if average == 0:
-            scores.append(0.0)
-            continue
-        score = 0.0
-        for term in query_terms:
-            frequency = count.get(term, 0)
-            if frequency == 0:
-                continue
-            found = document_frequency[term]
-            idf = math.log(1 + (total - found + 0.5) / (found + 0.5))
-            denominator = frequency + k1 * (1 - b + b * length / average)
-            score += idf * (frequency * (k1 + 1)) / denominator
-        scores.append(score)
-    return scores
-
-
-def ranks(rows: list[dict], scores: list[float]) -> list[int]:
-    order = sorted(
-        range(len(rows)),
-        key=lambda index: (-scores[index], rows[index]["id"]),
-    )
-    places = [0] * len(rows)
-    for place, index in enumerate(order, start=1):
-        places[index] = place
-    return places
-
-
-def fuse(rows, semantic, keyword, fuse_n=FUSED_TOP_K):
-    semantic_rank = ranks(rows, semantic)
-    keyword_rank = ranks(rows, keyword)
-    hits = []
-    for index, row in enumerate(rows):
-        score = 1 / (RRF_K + semantic_rank[index]) + 1 / (RRF_K + keyword_rank[index])
-        hits.append({**row, "score": score})
-    hits.sort(key=lambda hit: (-hit["score"], hit["id"]))
-    return hits[:fuse_n]
-
-
-def hybrid(question, query, rows):
-    if not rows:
-        return []
-    return fuse(
-        rows,
-        cosine_scores(query, rows),
-        bm25_scores(question, [row["text"] for row in rows]),
-    )
-
-
-def side(row: dict) -> dict:
-    return {
-        "id": row["id"],
-        "text": row["text"],
-        "version": row["version"],
-        "section": row["section"],
-        "parent_id": row["parent_id"],
-        "source": row["source"],
-    }
-
-
-def pair_hits(latest_hits, previous_hits):
-    previous_by_path = {hit["heading_path"]: hit for hit in previous_hits}
-    pairs = []
-    seen = set()
-    for hit in latest_hits:
-        path = hit["heading_path"]
-        seen.add(path)
-        previous = previous_by_path.get(path)
-        pairs.append(
-            {
-                "policy": hit["policy"],
-                "heading_path": path,
-                "score": hit["score"],
-                "current": side(hit),
-                "previous": None if previous is None else side(previous),
-            }
-        )
-    for hit in previous_hits:
-        if hit["heading_path"] in seen:
-            continue
-        pairs.append(
-            {
-                "policy": hit["policy"],
-                "heading_path": hit["heading_path"],
-                "score": hit["score"],
-                "current": None,
-                "previous": side(hit),
-            }
-        )
-    pairs.sort(key=lambda pair: (-pair["score"], pair["heading_path"]))
-    return pairs[:FUSED_TOP_K]
-
-
-def side_text(label: str, item) -> str:
-    if item is None:
-        return label
-    return f"{label} {item['version']}\n{item['text']}"
-
-
-def pair_text(pair: dict) -> str:
-    current = side_text("current", pair["current"])
-    previous = side_text("previous", pair["previous"])
-    return f"{pair['heading_path']}\n{current}\n{previous}"
-
-
-def apply_rerank(question, items, texts, reranker, n):
+    Why: the reranker improves precision but is an external service; an
+    outage or a missing key must cost quality, not availability.
+    """
     if not items:
         return []
-    by_text = {}
-    for item, text in zip(items, texts, strict=True):
-        by_text.setdefault(text, []).append(item)
-    ordered = []
-    for text in reranker.rerank(question, texts):
-        bucket = by_text.get(text)
-        if not bucket:
-            continue
-        ordered.append(bucket.pop(0))
-    for bucket in by_text.values():
-        ordered.extend(bucket)
-    return ordered[:n]
+    if reranker is None:
+        warn("rerank", "no COHERE_API_KEY; using fused order")
+        return items[:keep]
+    try:
+        order = reranker.rank(question, texts, top_n=keep)
+    except RerankUnavailable as error:
+        warn("rerank", f"Cohere unavailable ({error}); using fused order")
+        return items[:keep]
+    return [items[index] for index in order if 0 <= index < len(items)][:keep]
 
 
-def top_ids(hits) -> str:
-    ids = []
-    for hit in hits:
-        if "current" in hit:
-            ids.append(hit["heading_path"])
-        else:
-            ids.append(hit["id"])
-    return ",".join(ids)
+def _search(search_text, vector, chunks, where, database):
+    with stage("dense"):
+        dense_ids = database.dense_search(vector, where, DENSE_TOP_K)
+    with stage("lexical"):
+        lexical_ids = bm25_ranked(search_text, chunks)
+    with stage("fuse"):
+        return rrf_fuse(dense_ids, lexical_ids)
 
 
-def retrieve(question, embedder, model, database, reranker, n=RERANK_TOP_N) -> dict:
-    with stage("database"):
-        rows = database.rows()
-    policies = catalog(rows)
-    with stage("router"):
-        decision = route(question, model, policies)
-    with stage("embedder"):
-        vector = embedder.embed([question], task="query")[0]
-    kind = decision["kind"]
-    policy = decision["policy"]
-    if kind == "compare" and policy not in policies:
-        log("router", "kind=lookup reason=unknown policy")
-        kind = "lookup"
-        policy = ""
-        decision = {"kind": "lookup", "policy": "", "version": ""}
+def _policy_from_dense(vector, database, catalog) -> str | None:
+    pairs = [
+        (name, version)
+        for name, versions in catalog.items()
+        if len(versions) >= 2
+        for version in versions
+    ]
+    if not pairs:
+        return None
+    ids = database.dense_search(vector, where_for(pairs), 1)
+    if not ids:
+        return None
+    chunks = database.chunks_where(where_for(pairs))
+    by_id = {chunk["id"]: chunk for chunk in chunks}
+    chunk = by_id.get(ids[0])
+    if chunk is None:
+        return None
+    return chunk["policy"]
+
+
+def _lookup(filters, catalog, search_vector, database, question, reranker):
+    targets = lookup_targets(filters, catalog)
+    where = where_for(targets)
+    chunks = database.chunks_where(where)
+    fused = _search(filters.search_text, search_vector, chunks, where, database)
+    by_id = {chunk["id"]: chunk for chunk in chunks}
+    items = [by_id[hit.chunk_id] for hit in fused if hit.chunk_id in by_id]
+    texts = [item.get("embed_text") or item["text"] for item in items]
+    return rerank_with_fallback(question, items, texts, reranker)
+
+
+def _compare(filters, policy, catalog, search_vector, database, question, reranker):
+    versions = catalog[policy]
+    old, new = compare_versions(filters, versions)
+    old_chunks = database.chunks_where(where_for([(policy, old)]))
+    new_chunks = database.chunks_where(where_for([(policy, new)]))
+    renames = SECTION_RENAMES.get((policy, old, new), {})
+    pairs = pair_by_title(old_chunks, new_chunks, renames)
+    old_hits = {
+        hit.chunk_id: hit
+        for hit in _search(
+            filters.search_text,
+            search_vector,
+            old_chunks,
+            where_for([(policy, old)]),
+            database,
+        )
+    }
+    new_hits = {
+        hit.chunk_id: hit
+        for hit in _search(
+            filters.search_text,
+            search_vector,
+            new_chunks,
+            where_for([(policy, new)]),
+            database,
+        )
+    }
+    scored = []
+    for pair in pairs:
+        ranks = []
+        scores = []
+        for side_name, table in (("previous", old_hits), ("current", new_hits)):
+            side = pair[side_name]
+            if side and side["id"] in table:
+                hit = table[side["id"]]
+                scores.append(hit.score)
+                ranks.append(hit.best_rank)
+        pair["score"] = max(scores) if scores else 0.0
+        best_rank = min(ranks) if ranks else len(old_chunks) + len(new_chunks) + 1
+        scored.append((pair, best_rank))
+    scored.sort(key=lambda item: (-item[0]["score"], item[1], item[0]["title"]))
+    shortlist = [pair for pair, _rank in scored[:FUSED_TOP_K]]
+    texts = [pair_text(pair) for pair in shortlist]
+    return rerank_with_fallback(question, shortlist, texts, reranker)
+
+
+def retrieve(question: str, embedder, database, reranker, examples=None) -> dict:
+    """Clean, filter, route, search, fuse, rerank.
+
+    Returns {'kind', 'route', 'hits', 'filters'}; raises JunkQuestion for junk input.
+    """
+    with stage("clean"):
+        cleaned = clean_question(question)
+        reason = junk_reason(cleaned)
+        if reason:
+            raise JunkQuestion(reason)
+    chunks = database.chunks_where(None)
+    catalog = catalog_from_chunks(chunks)
+    with stage("filters"):
+        filters = extract_filters(cleaned, catalog)
+    if examples is None:
+        examples = embed_examples(embedder)
+    lookup_vectors, compare_vectors = examples
+    with stage("route"):
+        question_vector = embedder.embed([cleaned], task="similarity")[0]
+        best_lookup, best_compare = route_scores(
+            question_vector, lookup_vectors, compare_vectors
+        )
+        kind = classify_route(question_vector, lookup_vectors, compare_vectors)
+        log(
+            "route",
+            f"kind={kind} best_lookup={best_lookup:.3f} "
+            f"best_compare={best_compare:.3f}",
+        )
+    search_vector = embedder.embed([filters.search_text or cleaned], task="query")[0]
+    policy = filters.policy
     if kind == "compare":
-        hits = compare(question, vector, rows, policies, policy, reranker, n)
+        if policy and len(catalog.get(policy, ())) < 2:
+            kind = "lookup"
+            log("route", "kind=lookup reason=single version")
+        elif not policy:
+            policy = _policy_from_dense(search_vector, database, catalog)
+            if not policy:
+                kind = "lookup"
+                log("route", "kind=lookup reason=no multi-version policy")
+            else:
+                log("route", f"kind=compare policy={policy} reason=top dense hit")
+    if kind == "compare" and policy:
+        hits = _compare(
+            filters, policy, catalog, search_vector, database, cleaned, reranker
+        )
+        route = {
+            "kind": "compare",
+            "policy": policy,
+            "versions": compare_versions(filters, catalog[policy]),
+        }
     else:
-        hits = lookup(question, vector, rows, policies, decision, reranker, n)
-    log("retrieve", f"hits={len(hits)} top={top_ids(hits)}")
-    return {"kind": kind, "hits": hits}
-
-
-def lookup(question, vector, rows, policies, decision, reranker, n):
-    chosen = candidates(
-        rows, lookup_pairs(policies, decision["policy"], decision["version"])
+        hits = _lookup(filters, catalog, search_vector, database, cleaned, reranker)
+        route = {"kind": "lookup", "targets": lookup_targets(filters, catalog)}
+        kind = "lookup"
+    log(
+        "retrieve",
+        f"policy={filters.policy} versions={','.join(filters.versions) or '-'} "
+        f"kind={kind} search={filters.search_text!r} hits={len(hits)}",
     )
-    log("retrieve", f"candidates={len(chosen)}")
-    with stage("hybrid"):
-        fused = hybrid(question, vector, chosen)
-    with stage("rerank"):
-        return apply_rerank(
-            question, fused, [row["text"] for row in fused], reranker, n
-        )
+    return {"kind": kind, "route": route, "hits": hits, "filters": filters}
 
 
-def compare(question, vector, rows, policies, policy, reranker, n):
-    versions = policies[policy]
-    latest = versions[-1]
-    previous = versions[-2] if len(versions) > 1 else None
-    # TODO: This always compares latest to the previous version, even when
-    # the question names two specific versions.
-    current_rows = candidates(rows, [(policy, latest)])
-    previous_rows = [] if previous is None else candidates(rows, [(policy, previous)])
-    log("retrieve", f"candidates={len(current_rows) + len(previous_rows)}")
-    with stage("hybrid"):
-        pairs = pair_hits(
-            hybrid(question, vector, current_rows),
-            hybrid(question, vector, previous_rows),
+def _check_models() -> None:
+    client = ollama.Client(host=OLLAMA_HOST)
+    check_model_pin(client, EMBED_MODEL, EMBED_MODEL_DIGEST)
+    answer_digest = GENERATE_MODEL_DIGESTS.get(GENERATE_MODEL)
+    if not answer_digest:
+        raise RuntimeError(
+            f"{GENERATE_MODEL} has no pinned digest. "
+            "Add it to GENERATE_MODEL_DIGESTS in config.py."
         )
-    with stage("rerank"):
-        return apply_rerank(
-            question, pairs, [pair_text(pair) for pair in pairs], reranker, n
-        )
+    check_model_pin(client, GENERATE_MODEL, answer_digest)
 
 
 def main(argv=None, trace: bool = False) -> int:
@@ -292,29 +232,29 @@ def main(argv=None, trace: bool = False) -> int:
     else:
         silence_console()
     try:
-        client = ollama.Client(host=OLLAMA_HOST)
-        check_model_pin(client, EMBED_MODEL, EMBED_MODEL_DIGEST)
-        answer_digest = GENERATE_MODEL_DIGESTS.get(GENERATE_MODEL)
-        if not answer_digest:
-            raise RuntimeError(
-                f"{GENERATE_MODEL} has no pinned digest. "
-                "Add it to GENERATE_MODEL_DIGESTS in config.py."
-            )
-        check_model_pin(client, GENERATE_MODEL, answer_digest)
-        router = GenerationAdapter(model=ROUTE_MODEL)
-        answerer = GenerationAdapter()
+        cleaned = clean_question(question)
+        reason = junk_reason(cleaned)
+        if reason:
+            print(reason)
+            return 2
+        _check_models()
+        embedder = EmbeddingAdapter()
+        database = DatabaseAdapter(db_path, active_build_id(db_path))
         found = retrieve(
             question,
-            embedder=EmbeddingAdapter(),
-            model=router,
-            database=DatabaseAdapter(db_path, active_build_id(db_path)),
-            reranker=RerankerAdapter(),
+            embedder=embedder,
+            database=database,
+            reranker=make_reranker(),
+            examples=embed_examples(embedder),
         )
-        text = generate(question, found["kind"], found["hits"], answerer)
+        text = generate(question, found["kind"], found["hits"], GenerationAdapter())
         print(text)
         if trace:
             elapsed = time.perf_counter() - started
             print(f"latency: {elapsed:.3f}s")
+    except JunkQuestion as error:
+        print(str(error))
+        return 2
     finally:
         if trace:
             disable_question_log()
@@ -322,4 +262,4 @@ def main(argv=None, trace: bool = False) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())  # pragma: no cover
+    raise SystemExit(main())

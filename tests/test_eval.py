@@ -17,7 +17,6 @@ from adapter.database_adapter import DatabaseAdapter
 from adapter.embedding_adapter import EmbeddingAdapter
 from adapter.generation_adapter import GenerationAdapter
 from adapter.rerank_adapter import RerankerAdapter
-from rag.config import ROUTE_MODEL
 from rag.generate import generate
 from rag.manifest import active_build_id
 from rag.retrieve import retrieve
@@ -97,7 +96,6 @@ def test_aggregate_macro_averages_each_question():
 @pytest.mark.ollama
 def test_fixed_set_retrieval_and_answers(capsys):
     embedder = EmbeddingAdapter()
-    router = GenerationAdapter(model=ROUTE_MODEL)
     answerer = GenerationAdapter()
     db_path = ROOT / "chroma"
     database = DatabaseAdapter(db_path, active_build_id(db_path))
@@ -105,13 +103,7 @@ def test_fixed_set_retrieval_and_answers(capsys):
     rows = []
     for case in CASES:
         started = time.perf_counter()
-        found = retrieve(
-            case["question"],
-            embedder,
-            router,
-            database,
-            reranker,
-        )
+        found = retrieve(case["question"], embedder, database, reranker)
         answer = generate(case["question"], found["kind"], found["hits"], answerer)
         elapsed = time.perf_counter() - started
         expected = expected_keys(found["kind"], case["chunks"])

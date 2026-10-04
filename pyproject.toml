@@ -9,6 +9,7 @@ dependencies = [
     "docx2txt",
     "ollama>=0.6",
     "pydantic>=2",
+    "snowballstemmer",
 ]
 
 [project.optional-dependencies]
