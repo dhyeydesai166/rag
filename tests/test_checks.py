@@ -233,7 +233,25 @@ def test_totals_count_misses_and_inventions_separately():
         "inventions": 1,
         "clean_cases": 1,
         "route_ok": 2,
+        "skipped": 0,
     }
+
+
+def test_a_skipped_row_is_not_a_clean_case():
+    summary = totals(
+        [
+            {
+                "misses": [],
+                "inventions": [],
+                "route_ok": True,
+                "skipped": True,
+            },
+            {"misses": [], "inventions": [], "route_ok": True},
+        ]
+    )
+    assert summary["clean_cases"] == 1
+    assert summary["skipped"] == 1
+    assert summary["route_ok"] == 2
 
 
 VIDEO_V1 = {
@@ -358,6 +376,32 @@ def test_removed_section_is_not_judged_by_the_compare_rule():
 
 
 def test_repeated_claim_is_a_miss_when_the_case_forbids_it():
+    first = "Employees may play video games in the lounge area."
+    second = "Employees may play video games in the lounge room."
+    result = check_answer(
+        Answer(
+            status="answered",
+            claims=[
+                Claim(text=first, chunk_id="gold"),
+                Claim(text=second, chunk_id="other"),
+            ],
+        ),
+        {
+            "gold": {"text": first, "version": "2.0"},
+            "other": {"text": second, "version": "2.0"},
+        },
+        "lookup",
+        _case(
+            gold_chunks=["gold"],
+            required_facts=[],
+            stale_facts=[],
+            no_repeated_claims=True,
+        ),
+    )
+    assert any(item.startswith("repeated claim") for item in result.misses)
+
+
+def test_a_partial_restatement_is_not_a_repeated_claim():
     first = (
         "The company maintains a limited stock of hazmat suits, reserved "
         "exclusively for the top 10 employees on the Foosball Leaderboard "
@@ -384,7 +428,7 @@ def test_repeated_claim_is_a_miss_when_the_case_forbids_it():
             no_repeated_claims=True,
         ),
     )
-    assert any(item.startswith("repeated claim") for item in result.misses)
+    assert not any(item.startswith("repeated claim") for item in result.misses)
 
 
 def test_a_removed_line_satisfies_the_removed_fact():

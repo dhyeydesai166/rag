@@ -33,7 +33,8 @@ def score_case(case: dict, found: dict, model) -> dict:
     answer = generated.answer
     lines = []
     if answer.status != "not_in_sources":
-        lines = missing_side_lines(found.get("route") or {}, found["hits"])
+        cited_ids = {claim.chunk_id for claim in answer.claims}
+        lines = missing_side_lines(found.get("route") or {}, found["hits"], cited_ids)
     checked = check_answer(
         answer,
         passages_by_id(found["kind"], found["hits"]),
@@ -54,6 +55,7 @@ def score_case(case: dict, found: dict, model) -> dict:
         "retrieved_ids": list(passages_by_id(found["kind"], found["hits"])),
         "misses": checked.misses,
         "inventions": checked.inventions,
+        "skipped": bool(case.get("needs_rerank")) and not bool(found.get("reranked")),
         "latency": time.perf_counter() - started,
     }
 
@@ -63,9 +65,12 @@ def totals(rows: list[dict]) -> dict:
         "misses": sum(len(row["misses"]) for row in rows),
         "inventions": sum(len(row["inventions"]) for row in rows),
         "clean_cases": sum(
-            1 for row in rows if not row["misses"] and not row["inventions"]
+            1
+            for row in rows
+            if not row.get("skipped") and not row["misses"] and not row["inventions"]
         ),
         "route_ok": sum(1 for row in rows if row["route_ok"]),
+        "skipped": sum(1 for row in rows if row.get("skipped")),
     }
 
 

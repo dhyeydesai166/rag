@@ -8,7 +8,7 @@ A question-answering tool over the policy documents in `docs/`: HR, Health & Wel
 
 **Retrieval.** Clean the question in code, reject junk, and extract policy and version filters in code. Decide lookup versus compare by comparing the question's embedding to a few example questions. Then run dense search (Chroma) and BM25 on the same filtered chunks, fuse the ranks with reciprocal rank fusion (k=60), and rerank the shortlist with Cohere. If Cohere is missing or fails, the fused order is used and a warning is logged. A comparison runs that search once per version and pairs sections by normalized title.
 
-**Generation.** Pick the lookup or compare prompt file, wrap passages in `<source>` tags, pass the original question and the route the code chose, and ask Ollama for JSON (`status` plus claims, each with a `chunk_id`). The printed answer is those claims as plain sentences, a blank line, then the sources. A later lookup sentence is dropped only when it restates an earlier one and uses the same numbers. Comparisons and conflicts keep every sentence. A comparison pair with one side missing adds a line such as "Removed in version 2.0: Dispute Resolution"; the answer check counts that line.
+**Generation.** Pick the lookup or compare prompt file, wrap passages in `<source>` tags, pass the original question and the route the code chose, and ask Ollama for JSON (`status` plus claims, each with a `chunk_id`). The printed answer is those claims as plain sentences, each ending with a period, a blank line, then the sources. A later lookup sentence is dropped only when it nearly repeats an earlier one: about 80% of the shorter sentence's content words, the same numbers, and the same presence or absence of "not" or "no". Comparisons and conflicts keep every sentence. A comparison pair with one side missing adds its own line, such as "Removed in version 2.0: Dispute Resolution", when the answer cites the side that exists; the answer check counts that line.
 
 ```mermaid
 flowchart LR
@@ -87,9 +87,9 @@ python -m evals.run_retrieval
 python -m evals.run_answers --runs 3
 ```
 
-`pytest` does not need Ollama or Cohere. The two eval commands do need Ollama and the pinned models. They write `results/retrieval_eval.json` and `results/answer_eval.json` (gitignored) with provenance: git sha, date, model digests, prompt names and hashes, and the index build id. CI runs the answer eval once on push and PR, and three times on a manual run; results are uploaded as an artifact with provenance.
+`pytest` does not need Ollama or Cohere. The two eval commands do need Ollama and the pinned models. They write `results/retrieval_eval.json` and `results/answer_eval.json` (gitignored) with provenance: git sha, date, embed and generate model names and digests, rerank model, prompt names and hashes, index build id, collection, chunk max tokens, RRF k, fused top-k, rerank top-n, temperature, seed, Ollama version, Python version, and CI run. CI runs the answer eval once on push and PR, and three times on a manual run; results are uploaded as an artifact with provenance.
 
-The retrieval command exits 1 if a case takes the wrong route or its gold chunks are missing from the fused shortlist. The final top 3 is a gate only when Cohere actually ranked. `refrigerator-shelter` is scored only when Cohere ranked: without a key its top 3 are HR refrigerator chunks, not the preparedness shelter section. The answer command prints, per run:
+The retrieval command exits 1 if a case takes the wrong route or its gold chunks are missing from the fused shortlist. The final top 3 is a gate only when Cohere actually ranked. `refrigerator-shelter` is scored only when Cohere ranked: without a key its top 3 are HR refrigerator chunks, not the preparedness shelter section. When it is not scored, the answer-eval row is marked skipped and is not counted as a clean case. The answer command prints, per run:
 
 ```
 run  misses  inventions  clean_cases  route_ok
@@ -152,5 +152,5 @@ All of these live in `src/rag/config.py`.
 - Chroma has no multi-statement transactions. Incremental updates are crash-safe by write ordering. A query during an incremental run may briefly see a partially updated file. A full rebuild writes a new collection, checks it, then switches the manifest. A failed rebuild leaves the old index untouched. A query that starts just before the switch may fail once when the old collection is dropped; run it again.
 - Answer checks are string and number checks. They catch wrong numbers, stale facts, unsupported change claims, and missing facts. They do not catch every paraphrase error. Word numbers ("three") are covered by required facts, not by the number rule.
 - Cohere may change the model behind `rerank-v3.5`.
-- Without Cohere, "When should I go inside a refrigerator?" retrieves HR refrigerator chunks, not the preparedness shelter section. `refrigerator-shelter` is not scored on those runs.
+- Without Cohere, "When should I go inside a refrigerator?" retrieves HR refrigerator chunks, not the preparedness shelter section. `refrigerator-shelter` is not scored on those runs. That answer-eval row is marked skipped and is not counted as a clean case.
 - `validate.py` still validates each record twice. That second attempt stays until compliance clears removing it.

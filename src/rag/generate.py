@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from rag.compare import SECTION_NUMBER
+from rag.compare import SECTION_NUMBER, TITLE_SUFFIX
 from rag.config import COMPARE_PROMPT, LOOKUP_PROMPT
 from rag.logutil import log, stage, warn
 from rag.messages import NOT_IN_SOURCES_MESSAGE
@@ -16,10 +16,11 @@ from rag.models import Answer
 
 PROMPTS = Path(__file__).parent / "prompts"
 
-# A later claim restating one rule. The hazmat answers share just over half
-# their content words ("top 10" / "hazmat suits"); the door-ajar exception
-# shares none with the shelter sentence, so it stays.
-REPEAT_WORD_OVERLAP = 0.5
+# Near-duplicate lookup sentences only. Half the words merged "video games in
+# the lounge" with "foosball in the lounge", "five days" with "two more days",
+# and "required" with "not required". Comparisons and conflicts do not use this.
+REPEAT_WORD_OVERLAP = 0.8
+_NEGATION_WORDS = frozenset({"no", "not"})
 _CONTENT_STOP = frozenset(
     "a an the of to for and or in on at by with from that this is are was be "
     "been it its their they who when should must may will can into upon than "
@@ -34,15 +35,23 @@ def _numbers(text: str) -> frozenset[str]:
     )
 
 
+def _has_negation(text: str) -> bool:
+    words = set(re.findall(r"[a-z0-9]+", text.lower()))
+    return bool(words & _NEGATION_WORDS)
+
+
 def same_claim(left: str, right: str) -> bool:
     """True when two sentences state the same rule.
 
     Why: several passages often say one rule, and the model writes a sentence
     for each. Different numbers are different facts, so '1,000,000 tokens' and
-    '500,000 tokens' are not the same claim. Display of a comparison or a
+    '500,000 tokens' are not the same claim. A sentence that uses 'not' or 'no'
+    is not the same claim as one that does not. Display of a comparison or a
     conflict does not use this.
     """
     if _numbers(left) != _numbers(right):
+        return False
+    if _has_negation(left) != _has_negation(right):
         return False
     left_words = _content_words(left)
     right_words = _content_words(right)
@@ -167,16 +176,21 @@ def parse_answer(raw: str) -> Answer:
 
 
 def section_label(heading_path: str) -> str:
-    """'4. Foosball Time > 4.2 Dispute Resolution' -> 'Dispute Resolution'."""
+    """'4. Foosball Time > 4.2 Dispute Resolution' -> 'Dispute Resolution'.
+
+    Strips a trailing 'Updated' or 'New in Version N' suffix from the leaf,
+    the same way title pairing does.
+    """
     leaf = heading_path.split(" > ")[-1]
-    return SECTION_NUMBER.sub("", leaf).strip()
+    return TITLE_SUFFIX.sub("", SECTION_NUMBER.sub("", leaf)).strip()
 
 
-def missing_side_lines(route: dict, hits: list[dict]) -> list[str]:
-    """Name every compared section that exists in only one version.
+def missing_side_lines(route: dict, hits: list[dict], cited_ids: set[str]) -> list[str]:
+    """Name a one-sided section when the answer cites the side that exists.
 
     Why: title pairing already knows a section was removed or added. The
-    printed answer should say so without depending on the model's wording.
+    printed answer should say so for a pair the model cited, without depending
+    on the model's wording. An uncited pair is not named.
     """
     if route.get("kind") != "compare":
         return []
@@ -189,11 +203,21 @@ def missing_side_lines(route: dict, hits: list[dict]) -> list[str]:
         label = section_label(pair.get("heading_path") or "")
         if not label:
             continue
-        if pair.get("previous") and not pair.get("current"):
+        previous = pair.get("previous")
+        current = pair.get("current")
+        if previous and not current and previous.get("id") in cited_ids:
             lines.append(f"Removed in version {new}: {label}")
-        elif pair.get("current") and not pair.get("previous"):
+        elif current and not previous and current.get("id") in cited_ids:
             lines.append(f"Added in version {new}: {label}")
     return lines
+
+
+def _with_period(text: str) -> str:
+    """End a printed sentence with a period unless it already ends."""
+    stripped = text.strip()
+    if not stripped or stripped[-1] in ".?!":
+        return stripped
+    return f"{stripped}."
 
 
 def render(
@@ -204,8 +228,9 @@ def render(
 ) -> str:
     """Plain sentences, a blank line, then only the sources those sentences cite.
 
-    A later lookup sentence is dropped only when it restates an earlier one
-    and uses the same numbers. Comparisons and conflicts keep every sentence.
+    A later lookup sentence is dropped only when it nearly repeats an earlier
+    one and uses the same numbers. Comparisons and conflicts keep every
+    sentence. Added and removed lines are printed on their own lines.
     """
     if answer.status == "not_in_sources":
         return NOT_IN_SOURCES_MESSAGE
@@ -225,10 +250,8 @@ def render(
         if claim.chunk_id not in seen:
             seen.add(claim.chunk_id)
             cited.append(source)
-    for note in notes or []:
-        if note not in sentences:
-            sentences.append(note)
-    if not sentences:
+    kept_notes = [note for note in (notes or []) if note not in sentences]
+    if not sentences and not kept_notes:
         return NOT_IN_SOURCES_MESSAGE
     if answer.status == "conflicting":
         sentences.insert(0, "The sources disagree.")
@@ -238,7 +261,10 @@ def render(
         version = source["version"]
         heading = source["heading_path"]
         listing.append(f"[{index}] {policy} {version}, {heading}")
-    return " ".join(sentences) + "\n\n" + "\n".join(listing)
+    paragraph = " ".join(_with_period(sentence) for sentence in sentences)
+    note_block = "\n".join(_with_period(note) for note in kept_notes)
+    body = "\n".join(part for part in (paragraph, note_block) if part)
+    return body + "\n\n" + "\n".join(listing)
 
 
 @dataclass
@@ -263,6 +289,7 @@ def generate(question: str, result: dict, model) -> GeneratedAnswer:
         raw = model.generate(user, system=load_prompt(prompt_name), schema=schema)
     answer = parse_answer(raw)
     log("generate", f"kind={route.get('kind')} hits={len(hits)} status={answer.status}")
-    notes = missing_side_lines(route, hits)
+    cited_ids = {claim.chunk_id for claim in answer.claims}
+    notes = missing_side_lines(route, hits, cited_ids)
     text = render(answer, sources, kind=route.get("kind"), notes=notes)
     return GeneratedAnswer(answer, text, prompt_name)

@@ -17,6 +17,7 @@ from rag.generate import (
     prompt_sha256,
     render,
     same_claim,
+    section_label,
     source_tag,
 )
 from rag.messages import NOT_IN_SOURCES_MESSAGE
@@ -307,7 +308,7 @@ def test_prompt_hash_is_stable_and_names_the_file():
     assert lookup != prompt_sha256("compare_v1")
 
 
-def test_a_restated_claim_is_shown_once():
+def test_a_partial_restatement_stays_in_the_paragraph():
     sources = {
         "a": {
             "policy": "Preparedness Policy",
@@ -320,30 +321,62 @@ def test_a_restated_claim_is_shown_once():
             "heading_path": "8.2 Equipment Eligibility",
         },
     }
+    first = (
+        "The company maintains a limited stock of hazmat suits, "
+        "reserved exclusively for the top 10 employees on the "
+        "Foosball Leaderboard at the time of emergency."
+    )
+    second = "The top 10 ranked employees receive priority access to hazmat suits."
     answer = Answer(
         status="answered",
         claims=[
-            Claim(
-                text=(
-                    "The company maintains a limited stock of hazmat suits, "
-                    "reserved exclusively for the top 10 employees on the "
-                    "Foosball Leaderboard at the time of emergency."
-                ),
-                chunk_id="a",
-            ),
-            Claim(
-                text=(
-                    "The top 10 ranked employees receive priority access "
-                    "to hazmat suits."
-                ),
-                chunk_id="b",
-            ),
+            Claim(text=first, chunk_id="a"),
+            Claim(text=second, chunk_id="b"),
         ],
     )
     text = render(answer, sources)
-    assert text.startswith("The company maintains a limited stock of hazmat suits")
-    assert "priority access" not in text
-    assert "8.2 Equipment Eligibility" not in text
+    assert "limited stock of hazmat suits" in text
+    assert "priority access" in text
+    assert "8.2 Equipment Eligibility" in text
+    assert not same_claim(first, second)
+
+
+def test_a_near_duplicate_claim_is_shown_once():
+    first = "Employees may play video games in the lounge area."
+    second = "Employees may play video games in the lounge room."
+    answer = Answer(
+        status="answered",
+        claims=[
+            Claim(text=first, chunk_id="a"),
+            Claim(text=second, chunk_id="b"),
+        ],
+    )
+    text = render(answer, _usage_sources("a", "b"))
+    assert first in text
+    assert "lounge room" not in text
+    assert same_claim(first, second)
+
+
+def test_lounge_rules_word_numbers_and_negation_are_kept():
+    pairs = [
+        ("Video games in the lounge.", "Foosball in the lounge."),
+        ("The employee gets five days.", "The employee gets two more days."),
+        ("Attendance is required.", "Attendance is not required."),
+    ]
+    for left, right in pairs:
+        assert not same_claim(left, right)
+        text = render(
+            Answer(
+                status="answered",
+                claims=[
+                    Claim(text=left, chunk_id="a"),
+                    Claim(text=right, chunk_id="b"),
+                ],
+            ),
+            _usage_sources("a", "b"),
+        )
+        assert left in text
+        assert right in text
 
 
 def test_an_exception_to_the_same_rule_stays_in_the_paragraph():
@@ -481,10 +514,16 @@ def test_a_removed_section_is_named_in_the_printed_answer():
         {"kind": "compare", "route": route, "hits": hits},
         model,
     )
-    assert missing_side_lines(route, hits) == [
+    assert missing_side_lines(route, hits, {"old"}) == [
         "Removed in version 2.0: Dispute Resolution"
     ]
-    assert "Removed in version 2.0: Dispute Resolution" in result.text
+    assert missing_side_lines(route, hits, set()) == []
+    assert result.text.startswith(
+        "The winner kept the table.\n"
+        "Removed in version 2.0: Dispute Resolution.\n\n"
+        "Sources\n"
+    )
+    assert "table.." not in result.text
 
 
 def test_an_added_section_is_named_in_the_printed_answer():
@@ -506,9 +545,115 @@ def test_an_added_section_is_named_in_the_printed_answer():
             },
         }
     ]
-    assert missing_side_lines(route, hits) == [
+    assert missing_side_lines(route, hits, {"new"}) == [
         "Added in version 2.0: Skincare Stations"
     ]
+    assert missing_side_lines(route, hits, set()) == []
+
+
+def test_an_uncited_one_sided_pair_is_not_printed():
+    route = {
+        "kind": "compare",
+        "policy": "Time & Usage Policy",
+        "versions": ("1.0", "2.0"),
+    }
+    video = {
+        "policy": "Time & Usage Policy",
+        "title": "video game time > daily allowance",
+        "heading_path": "3. Video Game Time > 3.1 Daily Allowance",
+        "previous": {
+            "id": "old-video",
+            "version": "1.0",
+            "heading_path": "3. Video Game Time > 3.1 Daily Allowance",
+            "text": "45 minutes",
+        },
+        "current": {
+            "id": "new-video",
+            "version": "2.0",
+            "heading_path": "3. Video Game Time > 3.1 Daily Allowance",
+            "text": "45 minutes",
+        },
+    }
+    added = {
+        "policy": "Time & Usage Policy",
+        "title": (
+            "foosball time and the winner-takes-tokens rule > winner-takes-tokens rule"
+        ),
+        "heading_path": (
+            "4. Foosball Time and the Winner-Takes-Tokens Rule > "
+            "4.2 Winner-Takes-Tokens Rule"
+        ),
+        "previous": None,
+        "current": {
+            "id": "tokens",
+            "version": "2.0",
+            "heading_path": (
+                "4. Foosball Time and the Winner-Takes-Tokens Rule > "
+                "4.2 Winner-Takes-Tokens Rule"
+            ),
+            "text": "winner takes tokens",
+        },
+    }
+    model = RecordingModel(
+        json.dumps(
+            {
+                "status": "answered",
+                "claims": [
+                    {"text": "Video game time is 45 minutes.", "chunk_id": "new-video"}
+                ],
+            }
+        )
+    )
+    result = generate(
+        "what changed in video game time?",
+        {"kind": "compare", "route": route, "hits": [video, added]},
+        model,
+    )
+    assert "Winner-Takes-Tokens" not in result.text
+    assert "Added in version" not in result.text
+    assert missing_side_lines(route, [video, added], {"tokens"}) == [
+        "Added in version 2.0: Winner-Takes-Tokens Rule"
+    ]
+
+
+def test_a_sentence_without_punctuation_does_not_run_into_the_next_line():
+    answer = Answer(
+        status="answered",
+        claims=[Claim(text="The winner kept the table", chunk_id="old")],
+    )
+    text = render(
+        answer,
+        _usage_sources("old"),
+        notes=["Removed in version 2.0: Dispute Resolution"],
+    )
+    assert text.startswith(
+        "The winner kept the table.\n"
+        "Removed in version 2.0: Dispute Resolution.\n\n"
+        "Sources\n"
+    )
+    assert "table Removed" not in text
+    assert "Resolution.." not in text
+
+
+def test_section_label_strips_a_new_in_version_suffix():
+    assert (
+        section_label("7. AI Apocalypse Protocol — New in Version 2.0")
+        == "AI Apocalypse Protocol"
+    )
+    assert (
+        section_label(
+            "4. Foosball Time > 4.2 Winner-Takes-Tokens Rule — New in Version 2.0"
+        )
+        == "Winner-Takes-Tokens Rule"
+    )
+    assert (
+        section_label("4. Foosball Time > 4.2 Dispute Resolution")
+        == "Dispute Resolution"
+    )
+    assert (
+        section_label("8. Token Depletion — Consequences")
+        == "Token Depletion — Consequences"
+    )
 
 
 def test_lookup_prompt_states_a_base_amount():
