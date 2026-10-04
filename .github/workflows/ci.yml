@@ -2,106 +2,107 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  # No local ollama binary in this repo's dev environment. 0.35.1 is the
+  # current stable release (October 2026). `ollama --version` prints this
+  # number without the leading v.
+  OLLAMA_VERSION: "0.35.1"
+  OLLAMA_HOST: http://127.0.0.1:11434
+  OLLAMA_MODELS: ${{ github.workspace }}/.ollama-models
 
 jobs:
-  format:
+  lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - run: pip install -r requirements-dev.lock && pip install -e . --no-deps
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy src
+        continue-on-error: true
 
-      - name: Install
-        run: pip install ruff
-
-      - name: Format check
-        run: ruff format --check .
-
-  build:
+  unit:
+    needs: lint
     runs-on: ubuntu-latest
-    needs: format
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - run: pip install -r requirements-dev.lock && pip install -e . --no-deps
+      # Unset the workflow host so tests see the default in config.py.
+      - run: env -u OLLAMA_HOST pytest
+      - run: python -m build
 
-      - name: Install
-        run: pip install build
-
-      - name: Build
-        run: python -m build
-
-  test:
+  eval:
+    needs: unit
     runs-on: ubuntu-latest
-    needs: build
-    timeout-minutes: 180
+    timeout-minutes: 90
+    env:
+      # Job-level so unit tests still see the default gemma3:12b.
+      EMBED_MODEL: embeddinggemma:300m
+      GENERATE_MODEL: gemma3:4b
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check Cohere key
-        env:
-          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
-        run: |
-          if [ -n "$COHERE_API_KEY" ]; then
-            echo "COHERE_API_KEY is set"
-          else
-            echo "COHERE_API_KEY is empty"
-            echo "Add repository secret COHERE_API_KEY on this same repo, then push to this branch."
-            echo "Fork pull_request runs do not receive secrets; use a push on the repo that has the secret."
-            exit 1
-          fi
-
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Install
-        run: pip install -e ".[dev]"
-
-      - name: Unit and integration tests
-        run: pytest
-
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - run: pip install -r requirements-dev.lock && pip install -e . --no-deps
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h
-
-      - name: Install Ollama
-        run: curl -fsSL https://ollama.com/install.sh | sh
-
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.OLLAMA_MODELS }}
+          key: ollama-${{ env.OLLAMA_VERSION }}-${{ env.EMBED_MODEL }}-${{ env.GENERATE_MODEL }}-${{ hashFiles('src/rag/config.py') }}
+      - name: Install Ollama (pinned)
+        run: curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=${{ env.OLLAMA_VERSION }} sh
       - name: Start Ollama
         run: |
           ollama serve > /tmp/ollama.log 2>&1 &
-          for _ in $(seq 1 30); do
-            curl -sf http://127.0.0.1:11434/api/tags && exit 0
-            sleep 2
-          done
-          cat /tmp/ollama.log
-          echo "ollama did not start" >&2
-          exit 1
-
-      - name: Pull models
-        timeout-minutes: 60
-        run: |
-          ollama pull embeddinggemma:latest
-          ollama pull gemma3:4b
-        env:
-          OLLAMA_HOST: http://127.0.0.1:11434
-
-      - name: Ingest
+          for _ in $(seq 1 30); do curl -sf "$OLLAMA_HOST/api/tags" && exit 0; sleep 2; done
+          cat /tmp/ollama.log; exit 1
+      - name: Pull models (fast when cached)
+        timeout-minutes: 30
+        run: ollama pull "$EMBED_MODEL" && ollama pull "$GENERATE_MODEL"
+      - name: Ingest (also verifies model digests)
         run: python -m rag.ingest docs chroma
+      - name: Retrieval eval (gate)
         env:
-          OLLAMA_HOST: http://127.0.0.1:11434
-
-      - name: Evaluate
-        timeout-minutes: 120
-        run: pytest tests/test_eval.py::test_fixed_set_retrieval_and_answers -s -o addopts=
-        env:
-          OLLAMA_HOST: http://127.0.0.1:11434
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
-          GENERATE_MODEL: gemma3:4b
+        run: python -m evals.run_retrieval
+      - name: Answer eval (report, 3 runs)
+        if: always()
+        env:
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+        run: python -m evals.run_answers --runs 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results-${{ github.sha }}
+          path: |
+            results/retrieval_eval.json
+            results/answer_eval.json
+            /tmp/ollama.log
