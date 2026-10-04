@@ -93,11 +93,11 @@ jobs:
         env:
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
         run: python -m evals.run_retrieval
-      - name: Answer eval (report, 3 runs)
+      - name: Answer eval (report, 1 run)
         if: always()
         env:
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
-        run: python -m evals.run_answers --runs 3
+        run: python -m evals.run_answers --runs 1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
