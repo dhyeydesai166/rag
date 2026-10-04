@@ -126,7 +126,7 @@ All of these live in `src/rag/config.py`.
 | `RERANK_MODEL`, `RERANK_TOP_N` | `rerank-v3.5`, 3 | Final passages for the answer model. |
 | `RERANK_TIMEOUT_SECONDS`, `RERANK_RETRIES`, `RERANK_RETRY_DELAY_SECONDS` | 10, 1, 1.0 | Bounded wait, one retry, then fallback. |
 | `EVAL_PAUSE_SECONDS` | 6 | Cohere trial keys allow 10 rerank calls/minute; only applied with a key. |
-| `LOOKUP_PROMPT`, `COMPARE_PROMPT` | `lookup_v1`, `compare_v1` | Versioned prompt files. |
+| `LOOKUP_PROMPT`, `COMPARE_PROMPT` | `lookup_v2`, `compare_v2` | Versioned prompt files. Override with the env variables for a trial. |
 | `GENERATION_TEMPERATURE`, `GENERATION_SEED` | 0, 42 | Repeatable answers. |
 | `ANSWER_EVAL_RUNS` | 3 | Reveals nondeterminism at modest cost. |
 

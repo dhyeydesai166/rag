@@ -24,6 +24,18 @@ def test_pinned_models_and_chroma_paths():
     assert config.EVAL_PAUSE_SECONDS == 6.0
 
 
+def test_prompt_names_default_to_v2(monkeypatch):
+    monkeypatch.delenv("LOOKUP_PROMPT", raising=False)
+    monkeypatch.delenv("COMPARE_PROMPT", raising=False)
+    importlib.reload(config)
+    try:
+        assert config.LOOKUP_PROMPT == "lookup_v2"
+        assert config.COMPARE_PROMPT == "compare_v2"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config)
+
+
 def test_eval_pause_defaults_to_six_seconds(monkeypatch):
     monkeypatch.delenv("EVAL_PAUSE_SECONDS", raising=False)
     importlib.reload(config)

@@ -107,9 +107,10 @@ RERANK_MODEL = "rerank-v3.5"
 # Passages the answer model sees: enough for a rule plus its exception.
 RERANK_TOP_N = 3
 # Bump the suffix (lookup_v2) instead of editing a prompt in place, so every
-# eval result names the exact prompt it used.
-LOOKUP_PROMPT = "lookup_v2"
-COMPARE_PROMPT = "compare_v2"
+# eval result names the exact prompt it used. The environment override exists
+# for prompt trials; provenance records which prompt a result used.
+LOOKUP_PROMPT = os.environ.get("LOOKUP_PROMPT", "lookup_v2")
+COMPARE_PROMPT = os.environ.get("COMPARE_PROMPT", "compare_v2")
 # Temperature 0 and a fixed seed: the same question and passages give the same
 # answer, so eval runs are comparable and regressions are visible.
 GENERATION_TEMPERATURE = 0
