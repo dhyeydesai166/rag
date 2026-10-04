@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from adpater.rerank_adapter import RerankerAdapter, post_rerank
+from adapter.rerank_adapter import RerankerAdapter, post_rerank
 
 
 def test_adapter_returns_ranked_documents(monkeypatch):
@@ -79,7 +79,7 @@ def test_post_rerank_orders_by_relevance(monkeypatch):
         assert request.get_header("Authorization") == "Bearer secret"
         return Response()
 
-    monkeypatch.setattr("adpater.rerank_adapter.urlopen", urlopen)
+    monkeypatch.setattr("adapter.rerank_adapter.urlopen", urlopen)
     assert post_rerank("secret", "rerank-v3.5", "cake", ["vacation", "cake"]) == [
         "cake",
         "vacation",

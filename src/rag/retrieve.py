@@ -3,11 +3,23 @@ import re
 import sys
 import time
 
-from adpater.database_adapter import DatabaseAdapter
-from adpater.embedding_adapter import EmbeddingAdapter
-from adpater.generation_adapter import GenerationAdapter
-from adpater.rerank_adapter import RerankerAdapter
-from rag.config import ROUTE_MODEL
+import ollama
+
+from adapter.database_adapter import DatabaseAdapter
+from adapter.embedding_adapter import EmbeddingAdapter
+from adapter.generation_adapter import GenerationAdapter
+from adapter.rerank_adapter import RerankerAdapter
+from rag.config import (
+    EMBED_MODEL,
+    EMBED_MODEL_DIGEST,
+    FUSED_TOP_K,
+    GENERATE_MODEL,
+    GENERATE_MODEL_DIGESTS,
+    OLLAMA_HOST,
+    RERANK_TOP_N,
+    ROUTE_MODEL,
+    RRF_K,
+)
 from rag.generate import generate
 from rag.logutil import (
     disable_question_log,
@@ -16,11 +28,9 @@ from rag.logutil import (
     silence_console,
     stage,
 )
+from rag.model_pins import check_model_pin
 from rag.router import route
 
-RRF = 60
-FUSE_N = 20
-TOP_N = 3
 ALIASES = {
     "Time and Usage Policy": "Time & Usage Policy",
     "Health Policy": "Health & Wellness Policy",
@@ -76,7 +86,7 @@ def candidates(rows: list[dict], pairs: list[tuple]) -> list[dict]:
 
 
 def cosine(left: list[float], right: list[float]) -> float:
-    # TODO: switch this from simple cosine to hnsw as corpus grows, foundations baked into code but not implemented
+    # TODO: switch this from simple cosine to HNSW as the corpus grows.
     if not left or not right or len(left) != len(right):
         return 0.0
     dot = sum(a * b for a, b in zip(left, right, strict=True))
@@ -136,12 +146,12 @@ def ranks(rows: list[dict], scores: list[float]) -> list[int]:
     return places
 
 
-def fuse(rows, semantic, keyword, fuse_n=FUSE_N):
+def fuse(rows, semantic, keyword, fuse_n=FUSED_TOP_K):
     semantic_rank = ranks(rows, semantic)
     keyword_rank = ranks(rows, keyword)
     hits = []
     for index, row in enumerate(rows):
-        score = 1 / (RRF + semantic_rank[index]) + 1 / (RRF + keyword_rank[index])
+        score = 1 / (RRF_K + semantic_rank[index]) + 1 / (RRF_K + keyword_rank[index])
         hits.append({**row, "score": score})
     hits.sort(key=lambda hit: (-hit["score"], hit["id"]))
     return hits[:fuse_n]
@@ -198,7 +208,7 @@ def pair_hits(latest_hits, previous_hits):
             }
         )
     pairs.sort(key=lambda pair: (-pair["score"], pair["heading_path"]))
-    return pairs[:FUSE_N]
+    return pairs[:FUSED_TOP_K]
 
 
 def side_text(label: str, item) -> str:
@@ -240,7 +250,7 @@ def top_ids(hits) -> str:
     return ",".join(ids)
 
 
-def retrieve(question, embedder, model, database, reranker, n=TOP_N) -> dict:
+def retrieve(question, embedder, model, database, reranker, n=RERANK_TOP_N) -> dict:
     with stage("database"):
         rows = fold(database.rows())
     policies = catalog(rows)
@@ -280,7 +290,8 @@ def compare(question, vector, rows, policies, policy, reranker, n):
     versions = policies[policy]
     latest = versions[-1]
     previous = versions[-2] if len(versions) > 1 else None
-    # TODO: This always compares only to one version before, even on explicit request it diffs only to previous version, fix it
+    # TODO: This always compares latest to the previous version, even when
+    # the question names two specific versions.
     current_rows = candidates(rows, [(policy, latest)])
     previous_rows = [] if previous is None else candidates(rows, [(policy, previous)])
     log("retrieve", f"candidates={len(current_rows) + len(previous_rows)}")
@@ -305,6 +316,15 @@ def main(argv=None, trace: bool = False) -> int:
     else:
         silence_console()
     try:
+        client = ollama.Client(host=OLLAMA_HOST)
+        check_model_pin(client, EMBED_MODEL, EMBED_MODEL_DIGEST)
+        answer_digest = GENERATE_MODEL_DIGESTS.get(GENERATE_MODEL)
+        if not answer_digest:
+            raise RuntimeError(
+                f"{GENERATE_MODEL} has no pinned digest. "
+                "Add it to GENERATE_MODEL_DIGESTS in config.py."
+            )
+        check_model_pin(client, GENERATE_MODEL, answer_digest)
         router = GenerationAdapter(model=ROUTE_MODEL)
         answerer = GenerationAdapter()
         found = retrieve(

@@ -3,24 +3,34 @@ import json
 from rag.config import ROUTE_MODEL
 from rag.logutil import log
 
-PROMPT = """Reply with one JSON object only: {{"kind":"lookup"|"compare","policy":"","version":""}}
-Use compare only when the question asks what changed, what's new, a diff, or how one version of a policy differs from another.
-A question that names an old version without asking for a change is lookup.
-policy must be one of the catalog names or empty. version is the named version for lookup, or empty.
-
-Catalog:
-{catalog}
-
-Examples:
-what changed in HR Policy -> {{"kind":"compare","policy":"HR Policy","version":""}}
-what's new in preparedness -> {{"kind":"compare","policy":"Preparedness Policy","version":""}}
-diff the time policy -> {{"kind":"compare","policy":"Time & Usage Policy","version":""}}
-how did v2 differ for HR Policy -> {{"kind":"compare","policy":"HR Policy","version":""}}
-what did HR Policy 1.0 say about leave -> {{"kind":"lookup","policy":"HR Policy","version":"1.0"}}
-
-Question:
-{question}
-"""
+PROMPT = (
+    "Reply with one JSON object only: "
+    '{{"kind":"lookup"|"compare","policy":"","version":""}}\n'
+    "Use compare only when the question asks what changed, what's new, a "
+    "diff, or how one version of a policy differs from another.\n"
+    "A question that names an old version without asking for a change is "
+    "lookup.\n"
+    "policy must be one of the catalog names or empty. version is the named "
+    "version for lookup, or empty.\n"
+    "\n"
+    "Catalog:\n"
+    "{catalog}\n"
+    "\n"
+    "Examples:\n"
+    "what changed in HR Policy -> "
+    '{{"kind":"compare","policy":"HR Policy","version":""}}\n'
+    "what's new in preparedness -> "
+    '{{"kind":"compare","policy":"Preparedness Policy","version":""}}\n'
+    "diff the time policy -> "
+    '{{"kind":"compare","policy":"Time & Usage Policy","version":""}}\n'
+    "how did v2 differ for HR Policy -> "
+    '{{"kind":"compare","policy":"HR Policy","version":""}}\n'
+    "what did HR Policy 1.0 say about leave -> "
+    '{{"kind":"lookup","policy":"HR Policy","version":"1.0"}}\n'
+    "\n"
+    "Question:\n"
+    "{question}\n"
+)
 
 
 def routing_model() -> str:
@@ -37,7 +47,8 @@ def route(question: str, model, policies: dict) -> dict:
     )
     log(
         "router",
-        f"kind={decision['kind']} policy={decision['policy']} version={decision['version']}",
+        f"kind={decision['kind']} policy={decision['policy']} "
+        f"version={decision['version']}",
     )
     return decision
 

@@ -13,10 +13,10 @@ from eval_metrics import (
 )
 from eval_set import CASES
 
-from adpater.database_adapter import DatabaseAdapter
-from adpater.embedding_adapter import EmbeddingAdapter
-from adpater.generation_adapter import GenerationAdapter
-from adpater.rerank_adapter import RerankerAdapter
+from adapter.database_adapter import DatabaseAdapter
+from adapter.embedding_adapter import EmbeddingAdapter
+from adapter.generation_adapter import GenerationAdapter
+from adapter.rerank_adapter import RerankerAdapter
 from rag.config import ROUTE_MODEL
 from rag.generate import generate
 from rag.retrieve import retrieve

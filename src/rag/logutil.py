@@ -2,12 +2,15 @@ import logging
 import time
 from contextlib import contextmanager
 
-logger = logging.getLogger("ingest")
+logger = logging.getLogger("rag")
 _question = False
 
 
 def configure_logging() -> None:
     logger.setLevel(logging.INFO)
+    # Third-party libraries and basicConfig attach root handlers. Propagation
+    # would print every rag line a second time.
+    logger.propagate = False
     if logger.handlers:
         return
     handler = logging.StreamHandler()
@@ -43,6 +46,15 @@ def disable_question_log() -> None:
 def log(step: str, message: str) -> None:
     configure_logging()
     logger.info("%s %s", step, message)
+
+
+def warn(step: str, message: str) -> None:
+    """Warning that stays visible when the console is silenced.
+
+    Used when a service fails and the pipeline continues with a fallback.
+    """
+    configure_logging()
+    logger.warning("%s %s", step, message)
 
 
 @contextmanager

@@ -1,9 +1,8 @@
-import logging
 from pathlib import Path
 
 import pytest
 
-from adpater.database_adapter import DatabaseAdapter
+from adapter.database_adapter import DatabaseAdapter
 from rag.ingest import ingest, main
 
 DOCS = Path(__file__).resolve().parents[1] / "docs"
@@ -20,8 +19,7 @@ class FakeEmbedder:
         return [[float(index), 1.0] for index, _ in enumerate(texts)]
 
 
-def test_ingest_stores_pdf_and_docx_versions(tmp_path, caplog):
-    caplog.set_level(logging.INFO, logger="ingest")
+def test_ingest_stores_pdf_and_docx_versions(tmp_path, rag_logs):
     embedder = FakeEmbedder()
     database = DatabaseAdapter(tmp_path / "chroma")
 
@@ -51,8 +49,8 @@ def test_ingest_stores_pdf_and_docx_versions(tmp_path, caplog):
 
     assert ingest(DOCS, embedder, database) is None
     assert database.collection.count() == first
-    assert "files=7" in caplog.text
-    assert "finished" in caplog.text
+    assert "files=7" in rag_logs.text
+    assert "finished" in rag_logs.text
 
 
 def test_empty_directory_errors(tmp_path):
@@ -62,8 +60,7 @@ def test_empty_directory_errors(tmp_path):
         ingest(tmp_path, embedder, database)
 
 
-def test_validation_failure_stores_nothing(tmp_path, caplog):
-    caplog.set_level(logging.INFO, logger="ingest")
+def test_validation_failure_stores_nothing(tmp_path, rag_logs):
     embedder = FakeEmbedder()
     database = DatabaseAdapter(tmp_path / "chroma")
 
@@ -85,7 +82,7 @@ def test_validation_failure_stores_nothing(tmp_path, caplog):
 
     error = ingest(DOCS, embedder, database, chunk_file=bad_chunk)
     failures = [
-        entry for entry in caplog.records if "missing field: version" in entry.message
+        entry for entry in rag_logs.records if "missing field: version" in entry.message
     ]
     assert error == "missing field: version"
     assert len(failures) == 2
@@ -95,6 +92,7 @@ def test_validation_failure_stores_nothing(tmp_path, caplog):
 
 def test_main_defaults_to_docs_and_chroma(monkeypatch):
     seen = {}
+    monkeypatch.setattr("rag.ingest.check_model_pin", lambda *args, **kwargs: None)
 
     def fake_ingest(directory, embedder, database):
         seen["directory"] = directory
@@ -109,6 +107,7 @@ def test_main_defaults_to_docs_and_chroma(monkeypatch):
 
 
 def test_main_returns_the_validation_error(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr("rag.ingest.check_model_pin", lambda *args, **kwargs: None)
     monkeypatch.setattr("rag.ingest.EmbeddingAdapter", FakeEmbedder)
     monkeypatch.setattr("rag.ingest.DatabaseAdapter", lambda path: object())
     monkeypatch.setattr(

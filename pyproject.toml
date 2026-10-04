@@ -3,17 +3,19 @@ name = "doofenshmirtz-evil-incorporated-rag"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "chromadb",
+    "chromadb>=1.5",
     "llama-index-core",
     "llama-index-readers-file",
     "docx2txt",
-    "ollama",
+    "ollama>=0.6",
     "pydantic>=2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "build",
+    "mypy",
+    "pip-tools",
     "pytest",
     "pytest-cov",
     "ruff",
@@ -29,13 +31,20 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "--cov=rag --cov=adpater --cov-report=term-missing -m 'not ollama'"
+addopts = "--cov=rag --cov=adapter --cov-report=term-missing -m 'not ollama'"
 markers = ["ollama: needs a running local Ollama daemon"]
 
 [tool.coverage.run]
-source = ["rag", "adpater"]
+source = ["rag", "adapter"]
 omit = ["tests/*"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true

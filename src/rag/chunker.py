@@ -102,7 +102,8 @@ def chunk(blocks: list[dict], policy: str, version: str, source: str) -> list[di
     return records
 
 
-# TODO: Switch from structural to heirarchical chunking as corpus grows, foundations baked into the code already
+# TODO: Switch from structural to hierarchical chunking as the corpus grows.
+# The parent_id field is the foundation for that later change.
 
 
 def chunk_path(path: Path | str, blocks: list[dict]) -> list[dict]:

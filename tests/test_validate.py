@@ -1,5 +1,3 @@
-import logging
-
 from rag.validate import validate
 
 
@@ -21,16 +19,14 @@ def _record(**overrides):
     return base
 
 
-def test_valid_record_passes(caplog):
-    caplog.set_level(logging.INFO, logger="ingest")
+def test_valid_record_passes(rag_logs):
     assert validate(_record()) is None
-    assert "pass" in caplog.text
+    assert "pass" in rag_logs.text
 
 
-def test_missing_field_fails_after_two_attempts(caplog):
-    caplog.set_level(logging.INFO, logger="ingest")
+def test_missing_field_fails_after_two_attempts(rag_logs):
     error = validate(_record(version=""))
     assert error == "missing field: version"
-    failures = [r for r in caplog.records if "missing field: version" in r.message]
+    failures = [r for r in rag_logs.records if "missing field: version" in r.message]
     assert len(failures) == 2
     assert "attempt=2" in failures[1].message

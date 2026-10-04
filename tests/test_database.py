@@ -1,4 +1,4 @@
-from adpater.database_adapter import DatabaseAdapter
+from adapter.database_adapter import DatabaseAdapter
 
 
 def _record() -> dict:

@@ -1,6 +1,6 @@
 import ollama
 
-from rag.config import EMBED_MODEL, OLLAMA_HOST
+from rag.config import EMBED_DIM, EMBED_MODEL, OLLAMA_HOST
 from rag.logutil import log
 
 PREFIX = {
@@ -27,6 +27,9 @@ class EmbeddingAdapter:
             else response.embeddings
         )
         result = [[float(value) for value in vector] for vector in vectors]
+        for vector in result:
+            if len(vector) != EMBED_DIM:
+                raise ValueError(f"expected {EMBED_DIM} dims, got {len(vector)}")
         dimension = len(result[0]) if result else 0
         log("embedder", f"task={task} texts={len(texts)} dimension={dimension}")
         return result

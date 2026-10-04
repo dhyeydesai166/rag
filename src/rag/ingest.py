@@ -1,10 +1,14 @@
 import sys
 from pathlib import Path
 
-from adpater.database_adapter import DatabaseAdapter
-from adpater.embedding_adapter import EmbeddingAdapter
+import ollama
+
+from adapter.database_adapter import DatabaseAdapter
+from adapter.embedding_adapter import EmbeddingAdapter
 from rag.chunker import chunk_path
+from rag.config import EMBED_MODEL, EMBED_MODEL_DIGEST, OLLAMA_HOST
 from rag.logutil import log
+from rag.model_pins import check_model_pin
 from rag.reader import read
 from rag.validate import validate
 
@@ -49,6 +53,8 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     directory = argv[0] if argv else "docs"
     db_path = argv[1] if len(argv) > 1 else "chroma"
+    client = ollama.Client(host=OLLAMA_HOST)
+    check_model_pin(client, EMBED_MODEL, EMBED_MODEL_DIGEST)
     error = ingest(
         directory, embedder=EmbeddingAdapter(), database=DatabaseAdapter(db_path)
     )

@@ -2,12 +2,17 @@ from rag.config import GENERATE_MODEL
 from rag.logutil import log, stage
 
 EMPTY = "No matching policy text."
-SYSTEM = """You answer questions about Doofenshmirtz Evil Inc policies.
-Use only the policy passages in the user message.
-If the passages do not contain the answer, say so.
-For a comparison, describe what changed between the current and previous text of each section.
-Write the answer in as few sentences as possible to cover understanding. Include the specific rule from the passages so the answer can stand on its own. Do not include policy names, versions, headings, or citations.
-Do not use outside knowledge."""
+SYSTEM = (
+    "You answer questions about Doofenshmirtz Evil Inc policies.\n"
+    "Use only the policy passages in the user message.\n"
+    "If the passages do not contain the answer, say so.\n"
+    "For a comparison, describe what changed between the current and "
+    "previous text of each section.\n"
+    "Write the answer in as few sentences as possible to cover understanding. "
+    "Include the specific rule from the passages so the answer can stand on "
+    "its own. Do not include policy names, versions, headings, or citations.\n"
+    "Do not use outside knowledge."
+)
 
 
 def generation_model() -> str:
@@ -36,11 +41,13 @@ def citations(kind: str, hits: list) -> str:
         if kind == "compare":
             if hit.get("current"):
                 lines.append(
-                    f"{hit['policy']} {hit['current']['version']}, {hit['heading_path']}"
+                    f"{hit['policy']} {hit['current']['version']}, "
+                    f"{hit['heading_path']}"
                 )
             if hit.get("previous"):
                 lines.append(
-                    f"{hit['policy']} {hit['previous']['version']}, {hit['heading_path']}"
+                    f"{hit['policy']} {hit['previous']['version']}, "
+                    f"{hit['heading_path']}"
                 )
         else:
             lines.append(f"{hit['policy']} {hit['version']}, {hit['heading_path']}")

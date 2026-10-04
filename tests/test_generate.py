@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from adpater.generation_adapter import GenerationAdapter
+from adapter.generation_adapter import GenerationAdapter
 from rag.generate import EMPTY, SYSTEM, generate, generation_model
 
 

@@ -1,11 +1,8 @@
-import logging
 import sys
 
-from adpater.database_adapter import DatabaseAdapter
+from adapter.database_adapter import DatabaseAdapter
 from rag.logutil import disable_question_log, enable_question_log, stage
 from rag.retrieve import apply_rerank, bm25_scores, cosine, fuse, main, retrieve
-
-logging.basicConfig(level=logging.INFO)
 
 
 def record(policy, version, heading, text):
@@ -209,8 +206,7 @@ def test_compare_with_one_version_has_no_previous_side(tmp_path):
     assert found["hits"][0]["previous"] is None
 
 
-def test_unknown_compare_policy_falls_back_to_lookup(tmp_path, caplog):
-    caplog.set_level(logging.INFO, logger="ingest")
+def test_unknown_compare_policy_falls_back_to_lookup(tmp_path, rag_logs):
     rows = [record("HR Policy", "2.0", "3. Leave", "birthday cake")]
     found, _prompts, documents = ask(
         tmp_path,
@@ -218,13 +214,12 @@ def test_unknown_compare_policy_falls_back_to_lookup(tmp_path, caplog):
         [[1.0, 0.0]],
         ['{"kind":"compare","policy":"","version":""}'],
     )
-    assert "kind=lookup reason=unknown policy" in caplog.text
+    assert "kind=lookup reason=unknown policy" in rag_logs.text
     assert found["kind"] == "lookup"
     assert documents[0] == ["birthday cake"]
 
 
-def test_empty_collection_skips_the_answer_call(tmp_path, caplog):
-    caplog.set_level(logging.INFO, logger="ingest")
+def test_empty_collection_skips_the_answer_call(tmp_path, rag_logs):
     model = FakeModel(['{"kind":"lookup","policy":"","version":""}'])
     reranker = FakeReranker()
     text = retrieve(
@@ -238,7 +233,7 @@ def test_empty_collection_skips_the_answer_call(tmp_path, caplog):
     assert text["hits"] == []
     assert len(model.prompts) == 1
     assert reranker.documents == []
-    assert "hits=0" in caplog.text
+    assert "hits=0" in rag_logs.text
 
 
 def test_reranker_order_reaches_the_answer(tmp_path):
@@ -289,6 +284,7 @@ def test_unknown_rerank_text_is_ignored():
 
 def test_main_prints_the_answer(monkeypatch, capsys):
     seen = {}
+    monkeypatch.setattr("rag.retrieve.check_model_pin", lambda *args, **kwargs: None)
 
     def fake_retrieve(question, embedder, model, database, reranker, n=3):
         seen["question"] = question
@@ -325,6 +321,7 @@ def test_main_prints_the_answer(monkeypatch, capsys):
 
 def test_main_uses_the_given_database(monkeypatch):
     seen = {}
+    monkeypatch.setattr("rag.retrieve.check_model_pin", lambda *args, **kwargs: None)
 
     def fake_retrieve(question, embedder, model, database, reranker, n=3):
         seen["database"] = database
@@ -355,15 +352,14 @@ def test_trace_enables_stage_logs(monkeypatch):
     assert seen == {"trace": True, "argv": ["who gets cake?"]}
 
 
-def test_stage_logs_latency_only_for_a_question(caplog):
-    caplog.set_level(logging.INFO, logger="ingest")
+def test_stage_logs_latency_only_for_a_question(rag_logs):
     with stage("hybrid"):
         pass
-    assert "hybrid latency=" not in caplog.text
+    assert "hybrid latency=" not in rag_logs.text
     enable_question_log()
     try:
         with stage("hybrid"):
             pass
     finally:
         disable_question_log()
-    assert "hybrid latency=" in caplog.text
+    assert "hybrid latency=" in rag_logs.text
