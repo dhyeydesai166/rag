@@ -247,8 +247,8 @@ def main(argv=None, trace: bool = False) -> int:
             reranker=make_reranker(),
             examples=embed_examples(embedder),
         )
-        text = generate(question, found["kind"], found["hits"], GenerationAdapter())
-        print(text)
+        generated = generate(question, found, GenerationAdapter())
+        print(generated.text)
         if trace:
             elapsed = time.perf_counter() - started
             print(f"latency: {elapsed:.3f}s")

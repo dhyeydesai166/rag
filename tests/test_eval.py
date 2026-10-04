@@ -104,7 +104,7 @@ def test_fixed_set_retrieval_and_answers(capsys):
     for case in CASES:
         started = time.perf_counter()
         found = retrieve(case["question"], embedder, database, reranker)
-        answer = generate(case["question"], found["kind"], found["hits"], answerer)
+        answer = generate(case["question"], found, answerer).text
         elapsed = time.perf_counter() - started
         expected = expected_keys(found["kind"], case["chunks"])
         retrieved = retrieved_keys(found["kind"], found["hits"])

@@ -1,68 +1,172 @@
-from rag.config import GENERATE_MODEL
-from rag.logutil import log, stage
+"""Turn retrieved passages into a cited answer. The model only reads and judges."""
 
-EMPTY = "No matching policy text."
-SYSTEM = (
-    "You answer questions about Doofenshmirtz Evil Inc policies.\n"
-    "Use only the policy passages in the user message.\n"
-    "If the passages do not contain the answer, say so.\n"
-    "For a comparison, describe what changed between the current and "
-    "previous text of each section.\n"
-    "Write the answer in as few sentences as possible to cover understanding. "
-    "Include the specific rule from the passages so the answer can stand on "
-    "its own. Do not include policy names, versions, headings, or citations.\n"
-    "Do not use outside knowledge."
-)
+import hashlib
+import html
+from dataclasses import dataclass
+from pathlib import Path
 
+from pydantic import ValidationError
 
-def generation_model() -> str:
-    return GENERATE_MODEL
+from rag.config import COMPARE_PROMPT, LOOKUP_PROMPT
+from rag.logutil import log, stage, warn
+from rag.messages import NOT_IN_SOURCES_MESSAGE
+from rag.models import Answer
+
+PROMPTS = Path(__file__).parent / "prompts"
 
 
-def side_text(label: str, item) -> str:
-    if item is None:
-        return label
-    return f"{label} {item['version']}\n{item['text']}"
+def load_prompt(name: str) -> str:
+    """Read a prompt file shipped with the package (src/rag/prompts/<name>.txt)."""
+    return (PROMPTS / f"{name}.txt").read_text(encoding="utf-8")
 
 
-def chunk_block(hit: dict) -> str:
-    return f"{hit['policy']} {hit['version']} {hit['heading_path']}\n{hit['text']}"
+def prompt_sha256(name: str) -> str:
+    """Hash recorded in provenance, so an accidental in-place edit is visible."""
+    return hashlib.sha256(load_prompt(name).encode()).hexdigest()
 
 
-def pair_block(pair: dict) -> str:
-    current = side_text("current", pair["current"])
-    previous = side_text("previous", pair["previous"])
-    return f"{pair['policy']} {pair['heading_path']}\n{current}\n{previous}"
+def source_tag(chunk: dict) -> str:
+    """Wrap one passage so its text cannot be read as instructions.
+
+    Attribute values and text are escaped so passage text cannot close the tag.
+    """
+    attrs = " ".join(
+        f'{name}="{html.escape(str(value), quote=True)}"'
+        for name, value in (
+            ("id", chunk["id"]),
+            ("policy", chunk["policy"]),
+            ("version", chunk["version"]),
+            ("section", chunk["heading_path"]),
+        )
+    )
+    body = html.escape(chunk["text"], quote=False)
+    return f"<source {attrs}>\n{body}\n</source>"
 
 
-def citations(kind: str, hits: list) -> str:
-    lines = []
+def describe_route(route: dict) -> str:
+    """'lookup on HR Policy 2.0' or 'compare Time & Usage Policy 1.0 -> 2.0'."""
+    if route.get("kind") == "compare":
+        old, new = route["versions"]
+        return f"compare {route['policy']} {old} -> {new}"
+    targets = route.get("targets") or []
+    if not targets:
+        return "lookup"
+    named = ", ".join(f"{policy} {version}" for policy, version in targets)
+    return f"lookup on {named}"
+
+
+def _side_tag(side: dict | None, policy: str, version: str) -> str:
+    if side is None:
+        escaped = html.escape(version, quote=True)
+        return f'<missing version="{escaped}"/>'
+    chunk = dict(side)
+    chunk["policy"] = policy
+    return source_tag(chunk)
+
+
+def pair_tag(pair: dict, old_version: str, new_version: str) -> str:
+    """Older passage, then newer, inside one pair. A missing side stays visible."""
+    section = html.escape(pair["title"], quote=True)
+    older = _side_tag(pair["previous"], pair["policy"], old_version)
+    newer = _side_tag(pair["current"], pair["policy"], new_version)
+    return f'<pair section="{section}">\n{older}\n{newer}\n</pair>'
+
+
+def build_user_message(question: str, route: dict, hits: list[dict]) -> str:
+    """Original question, the code-decided route, and tagged passages."""
+    if route.get("kind") == "compare":
+        old, new = route["versions"]
+        passages = "\n\n".join(pair_tag(hit, old, new) for hit in hits)
+    else:
+        passages = "\n\n".join(source_tag(hit) for hit in hits)
+    return f"Question: {question}\n\nRoute: {describe_route(route)}\n\n{passages}"
+
+
+def answer_schema(allowed_ids: list[str]) -> dict:
+    """JSON schema for Answer, with chunk_id limited to the ids actually sent.
+
+    Why the enum: Ollama constrains decoding to the schema, so the model cannot
+    invent an id; the eval's citation check then guards against regressions.
+    """
+    schema = Answer.model_json_schema()
+    schema["$defs"]["Claim"]["properties"]["chunk_id"]["enum"] = list(allowed_ids)
+    return schema
+
+
+def sources_by_id(route: dict, hits: list[dict]) -> dict[str, dict]:
+    """Every passage id the model was shown, for citation rendering."""
+    found = {}
+    if route.get("kind") == "compare":
+        for pair in hits:
+            for side in (pair.get("previous"), pair.get("current")):
+                if side:
+                    found[side["id"]] = {**side, "policy": pair["policy"]}
+        return found
     for hit in hits:
-        if kind == "compare":
-            if hit.get("current"):
-                lines.append(
-                    f"{hit['policy']} {hit['current']['version']}, "
-                    f"{hit['heading_path']}"
-                )
-            if hit.get("previous"):
-                lines.append(
-                    f"{hit['policy']} {hit['previous']['version']}, "
-                    f"{hit['heading_path']}"
-                )
-        else:
-            lines.append(f"{hit['policy']} {hit['version']}, {hit['heading_path']}")
-    return "\n".join(lines)
+        found[hit["id"]] = hit
+    return found
 
 
-def generate(question: str, kind: str, hits: list, model) -> str:
+def parse_answer(raw: str) -> Answer:
+    """Validate the model's JSON. Invalid JSON becomes status 'not_in_sources'
+    with a logged warning; raw model text is never shown to the user."""
+    try:
+        return Answer.model_validate_json(raw)
+    except (ValidationError, ValueError):
+        warn("generate", "model returned invalid JSON; showing not_in_sources")
+        return Answer(status="not_in_sources", claims=[])
+
+
+def render(answer: Answer, sources: dict[str, dict]) -> str:
+    """One line per claim with a [n] marker, then only the sources those claims cite."""
+    if answer.status == "not_in_sources":
+        return NOT_IN_SOURCES_MESSAGE
+    numbers: dict[str, int] = {}
+    cited: list[dict] = []
+    lines = []
+    for claim in answer.claims:
+        source = sources.get(claim.chunk_id)
+        if source is None:
+            warn("generate", f"dropping claim with unknown chunk_id={claim.chunk_id}")
+            continue
+        if claim.chunk_id not in numbers:
+            numbers[claim.chunk_id] = len(cited) + 1
+            cited.append(source)
+        lines.append(f"{claim.text} [{numbers[claim.chunk_id]}]")
+    if not lines:
+        return NOT_IN_SOURCES_MESSAGE
+    body = "\n".join(lines)
+    if answer.status == "conflicting":
+        body = "The sources disagree:\n" + body
+    listing = ["Sources"]
+    for index, source in enumerate(cited, start=1):
+        policy = source["policy"]
+        version = source["version"]
+        heading = source["heading_path"]
+        listing.append(f"[{index}] {policy} {version}, {heading}")
+    return body + "\n\n" + "\n".join(listing)
+
+
+@dataclass
+class GeneratedAnswer:
+    answer: Answer
+    text: str
+    prompt_name: str
+
+
+def generate(question: str, result: dict, model) -> GeneratedAnswer:
+    """Pick the prompt for the route, call the model with the schema, render."""
+    route = result.get("route") or {"kind": result["kind"]}
+    hits = result["hits"]
+    prompt_name = COMPARE_PROMPT if route.get("kind") == "compare" else LOOKUP_PROMPT
     if not hits:
-        return EMPTY
-    blocks = pair_block if kind == "compare" else chunk_block
-    body = "\n\n".join(blocks(hit) for hit in hits)
+        empty = Answer(status="not_in_sources", claims=[])
+        return GeneratedAnswer(empty, NOT_IN_SOURCES_MESSAGE, prompt_name)
+    sources = sources_by_id(route, hits)
+    user = build_user_message(question, route, hits)
+    schema = answer_schema(list(sources))
     with stage("generate"):
-        text = model.generate(f"Question: {question}\n\n{body}", system=SYSTEM)
-    log("generate", f"kind={kind} hits={len(hits)}")
-    return f"{text.strip()}\n\n{citations(kind, hits)}"
-
-
-# TODO: Add LLM as judge before entering enterprise
+        raw = model.generate(user, system=load_prompt(prompt_name), schema=schema)
+    answer = parse_answer(raw)
+    log("generate", f"kind={route.get('kind')} hits={len(hits)} status={answer.status}")
+    return GeneratedAnswer(answer, render(answer, sources), prompt_name)

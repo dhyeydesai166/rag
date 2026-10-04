@@ -1,4 +1,5 @@
 import sys
+from types import SimpleNamespace
 
 from adapter.database_adapter import DatabaseAdapter
 from rag.logutil import disable_question_log, enable_question_log, stage
@@ -314,7 +315,9 @@ def test_main_prints_the_answer(monkeypatch, capsys):
     monkeypatch.setattr("rag.retrieve.retrieve", fake_retrieve)
     monkeypatch.setattr(
         "rag.retrieve.generate",
-        lambda question, kind, hits, model: "cake" if model == "generator" else "",
+        lambda question, result, model: SimpleNamespace(
+            text="cake" if model == "generator" else ""
+        ),
     )
     assert main() == 0
     assert capsys.readouterr().out.strip() == "cake"
@@ -338,7 +341,9 @@ def test_main_uses_the_given_database(monkeypatch):
         return {"kind": "lookup", "hits": [], "route": {}, "filters": None}
 
     monkeypatch.setattr("rag.retrieve.retrieve", fake_retrieve)
-    monkeypatch.setattr("rag.retrieve.generate", lambda *args: "ok")
+    monkeypatch.setattr(
+        "rag.retrieve.generate", lambda *args: SimpleNamespace(text="ok")
+    )
     assert main(["question", "other"]) == 0
     assert seen["database"] == "other"
 

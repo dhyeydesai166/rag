@@ -99,6 +99,15 @@ FUSED_TOP_K = 20
 RERANK_MODEL = "rerank-v3.5"
 # Passages the answer model sees: enough for a rule plus its exception.
 RERANK_TOP_N = 3
+# Bump the suffix (lookup_v2) instead of editing a prompt in place, so every
+# eval result names the exact prompt it used.
+LOOKUP_PROMPT = "lookup_v1"
+COMPARE_PROMPT = "compare_v1"
+# Temperature 0 and a fixed seed: the same question and passages give the same
+# answer, so eval runs are comparable and regressions are visible.
+GENERATION_TEMPERATURE = 0
+GENERATION_SEED = 42
+
 # A rerank call normally returns in well under a second; 10s means something is wrong.
 RERANK_TIMEOUT_SECONDS = 10
 # One retry covers a transient blip without making a real outage slow.
