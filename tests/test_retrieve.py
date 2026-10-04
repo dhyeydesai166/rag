@@ -59,9 +59,10 @@ class FakeEmbedder:
 
 
 class FakeReranker:
-    def __init__(self, reverse=False, fail=False):
+    def __init__(self, reverse=False, fail=False, order=None):
         self.reverse = reverse
         self.fail = fail
+        self.order = order
         self.documents = []
 
     def rank(self, question, documents, top_n):
@@ -70,6 +71,8 @@ class FakeReranker:
             from adapter.rerank_adapter import RerankUnavailable
 
             raise RerankUnavailable("down")
+        if self.order is not None:
+            return list(self.order)
         order = list(range(len(documents)))
         if self.reverse:
             order.reverse()
@@ -229,6 +232,68 @@ def test_reranker_failure_falls_back_to_fused_order_with_a_warning(tmp_path, rag
         fail=True,
     )
     assert found["hits"]
+    assert "using fused order" in rag_logs.text
+
+
+def _with_order(tmp_path, order):
+    rows = [
+        record("HR Policy", "2.0", "1. Purpose", "vacation days"),
+        record("HR Policy", "2.0", "3. Leave", "birthday cake"),
+    ]
+    embedder = FakeEmbedder([1.0, 0.0])
+    reranker = FakeReranker(order=order)
+    found = retrieve(
+        "What does the HR Policy say?",
+        embedder,
+        store(tmp_path / "chroma", rows, [[1.0, 0.0], [0.0, 1.0]]),
+        reranker,
+        embedder.examples(),
+    )
+    return found
+
+
+def test_repeated_rerank_indices_keep_each_passage_once(tmp_path):
+    found = _with_order(tmp_path, [1, 1, 0])
+    assert [hit["id"] for hit in found["hits"]] == [
+        found["fused_ids"][1],
+        found["fused_ids"][0],
+    ]
+
+
+def test_out_of_range_rerank_indices_are_dropped(tmp_path, rag_logs):
+    found = _with_order(tmp_path, [5, 0])
+    assert [hit["id"] for hit in found["hits"]] == [found["fused_ids"][0]]
+    assert found["reranked"] is True
+    assert "dropped 1" in rag_logs.text
+
+
+def test_only_invalid_rerank_indices_use_fused_order(tmp_path, rag_logs):
+    found = _with_order(tmp_path, [9, -1])
+    expected = found["fused_ids"][: len(found["hits"])]
+    assert [hit["id"] for hit in found["hits"]] == expected
+    assert found["reranked"] is False
+    assert "no usable indices" in rag_logs.text
+
+
+def test_dropped_connection_falls_back_to_fused_order(tmp_path, rag_logs, monkeypatch):
+    from adapter.rerank_adapter import RerankerAdapter
+
+    monkeypatch.setattr("adapter.rerank_adapter.time.sleep", lambda _seconds: None)
+
+    def post(*args):
+        raise ConnectionResetError("reset by peer")
+
+    rows = [record("HR Policy", "2.0", "1. Purpose", "vacation days")]
+    embedder = FakeEmbedder([1.0, 0.0])
+    found = retrieve(
+        "What does the HR Policy say?",
+        embedder,
+        store(tmp_path / "chroma", rows, [[1.0, 0.0]]),
+        RerankerAdapter(post=post, api_key="k"),
+        embedder.examples(),
+    )
+    assert found["hits"]
+    assert found["reranked"] is False
     assert "using fused order" in rag_logs.text
 
 

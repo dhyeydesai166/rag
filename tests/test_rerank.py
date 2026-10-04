@@ -1,3 +1,4 @@
+import http.client
 import json
 import urllib.error
 
@@ -148,3 +149,86 @@ def test_auth_error_is_not_retried():
     with pytest.raises(RerankUnavailable):
         RerankerAdapter(post=post, api_key="secret").rank("cake", ["a"], 1)
     assert calls["n"] == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionResetError("reset by peer"),
+        http.client.RemoteDisconnected("closed"),
+        http.client.IncompleteRead(b""),
+        OSError("network is unreachable"),
+        TimeoutError("slow"),
+        urllib.error.URLError("dns"),
+    ],
+)
+def test_network_failures_are_retried_once_then_unavailable(monkeypatch, error):
+    monkeypatch.setattr("adapter.rerank_adapter.time.sleep", lambda _seconds: None)
+    calls = {"n": 0}
+
+    def post(*args):
+        calls["n"] += 1
+        raise error
+
+    with pytest.raises(RerankUnavailable):
+        RerankerAdapter(post=post, api_key="secret").rank("cake", ["a"], 1)
+    assert calls["n"] == 2
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        json.JSONDecodeError("Expecting value", "", 0),
+        KeyError("results"),
+        ValueError("bad"),
+        TypeError("bad shape"),
+    ],
+)
+def test_unreadable_responses_are_not_retried(error):
+    calls = {"n": 0}
+
+    def post(*args):
+        calls["n"] += 1
+        raise error
+
+    with pytest.raises(RerankUnavailable):
+        RerankerAdapter(post=post, api_key="secret").rank("cake", ["a"], 1)
+    assert calls["n"] == 1
+
+
+def _urlopen_body(monkeypatch, payload):
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            if isinstance(payload, Exception):
+                raise payload
+            return payload
+
+    monkeypatch.setattr(
+        "adapter.rerank_adapter.urlopen", lambda request, timeout: Response()
+    )
+    monkeypatch.setattr("adapter.rerank_adapter.time.sleep", lambda _seconds: None)
+
+
+def test_body_that_is_not_json_is_unavailable(monkeypatch):
+    _urlopen_body(monkeypatch, b"<html>busy</html>")
+    with pytest.raises(RerankUnavailable):
+        RerankerAdapter(post=post_rerank, api_key="secret").rank("cake", ["a"], 1)
+
+
+def test_result_without_an_index_is_unavailable(monkeypatch):
+    body = json.dumps({"results": [{"relevance_score": 0.5}]}).encode()
+    _urlopen_body(monkeypatch, body)
+    with pytest.raises(RerankUnavailable):
+        RerankerAdapter(post=post_rerank, api_key="secret").rank("cake", ["a"], 1)
+
+
+def test_connection_reset_while_reading_the_body_is_unavailable(monkeypatch):
+    _urlopen_body(monkeypatch, ConnectionResetError("reset"))
+    with pytest.raises(RerankUnavailable):
+        RerankerAdapter(post=post_rerank, api_key="secret").rank("cake", ["a"], 1)

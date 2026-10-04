@@ -15,6 +15,7 @@ from adapter.generation_adapter import GenerationAdapter
 from adapter.rerank_adapter import make_reranker
 from evals.cases import CASES
 from evals.checks import check_answer, counterparts_by_id, passages_by_id
+from evals.pacing import pause_between_questions
 from rag.config import ANSWER_EVAL_RUNS, OLLAMA_HOST
 from rag.generate import generate
 from rag.manifest import load_manifest
@@ -98,9 +99,8 @@ def main(argv=None) -> int:
                     model,
                 )
             )
-            # Trial Cohere keys allow about 10 rerank calls a minute.
             if index < len(CASES) - 1 or number < args.runs:
-                time.sleep(6)
+                pause_between_questions(reranker)
         summary = totals(rows)
         runs.append({"run": number, "totals": summary, "cases": rows})
         print(format_totals(number, summary))

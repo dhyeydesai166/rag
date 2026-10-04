@@ -117,6 +117,10 @@ RERANK_TIMEOUT_SECONDS = 10
 # One retry covers a transient blip without making a real outage slow.
 RERANK_RETRIES = 1
 RERANK_RETRY_DELAY_SECONDS = 1.0
+# Cohere trial keys allow 10 rerank calls a minute. An eval makes one call per
+# question, so 60 / 10 = 6 seconds between questions stays under the limit.
+# Applied only when a Cohere key is set. Set 0 for a production key.
+EVAL_PAUSE_SECONDS = float(os.environ.get("EVAL_PAUSE_SECONDS", "6"))
 
 
 def read_env(path=".env") -> dict[str, str]:

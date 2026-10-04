@@ -12,6 +12,7 @@ from adapter.embedding_adapter import EmbeddingAdapter
 from adapter.rerank_adapter import make_reranker
 from evals.cases import CASES
 from evals.checks import retrieval_hit, retrieved_ids
+from evals.pacing import pause_between_questions
 from rag.manifest import load_manifest
 from rag.provenance import provenance
 from rag.retrieve import _check_models, retrieve
@@ -73,9 +74,8 @@ def main(argv=None) -> int:
         row = score_case(case, found)
         row["latency"] = time.perf_counter() - started
         rows.append(row)
-        # Trial Cohere keys allow about 10 rerank calls a minute.
         if index < len(CASES) - 1:
-            time.sleep(6)
+            pause_between_questions(reranker)
     manifest = load_manifest(db_path)
     build_id = manifest.get("active_build_id") or ""
     build = manifest.get("builds", {}).get(build_id, {})

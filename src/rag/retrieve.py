@@ -43,6 +43,19 @@ from rag.route import classify_route, embed_examples, route_scores
 from rag.section_map import SECTION_RENAMES
 
 
+def unique_valid_indices(order: list, count: int) -> list[int]:
+    """Reranker indices in order, without repeats and without out-of-range values.
+
+    Why: one bad entry must not show the same passage twice or raise IndexError.
+    """
+    kept: list[int] = []
+    for index in order:
+        is_int = isinstance(index, int) and not isinstance(index, bool)
+        if is_int and 0 <= index < count and index not in kept:
+            kept.append(index)
+    return kept
+
+
 def rerank_with_fallback(question, items, texts, reranker, keep: int = RERANK_TOP_N):
     """Reorder the fused shortlist with Cohere; on any failure keep the fused order.
 
@@ -62,8 +75,13 @@ def rerank_with_fallback(question, items, texts, reranker, keep: int = RERANK_TO
     except RerankUnavailable as error:
         warn("rerank", f"Cohere unavailable ({error}); using fused order")
         return items[:keep], False
-    kept = [items[index] for index in order if 0 <= index < len(items)][:keep]
-    return kept, True
+    valid = unique_valid_indices(order, len(items))
+    if len(valid) < len(order):
+        warn("rerank", f"dropped {len(order) - len(valid)} repeated or invalid indices")
+    if not valid:
+        warn("rerank", "Cohere returned no usable indices; using fused order")
+        return items[:keep], False
+    return [items[index] for index in valid][:keep], True
 
 
 def _search(search_text, vector, chunks, where, database):

@@ -1,3 +1,5 @@
+import importlib
+
 from rag import config
 
 
@@ -19,5 +21,16 @@ def test_pinned_models_and_chroma_paths():
     assert config.FUSED_TOP_K == 20
     assert config.RERANK_TOP_N == 3
     assert config.ANSWER_EVAL_RUNS == 3
+    assert config.EVAL_PAUSE_SECONDS == 6.0
+
+
+def test_eval_pause_defaults_to_six_seconds(monkeypatch):
+    monkeypatch.delenv("EVAL_PAUSE_SECONDS", raising=False)
+    importlib.reload(config)
+    try:
+        assert config.EVAL_PAUSE_SECONDS == 6.0
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config)
     assert config.GENERATION_TEMPERATURE == 0
     assert config.GENERATION_SEED == 42

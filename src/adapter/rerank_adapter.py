@@ -2,6 +2,7 @@
 unless rank() itself is used and the service fails.
 """
 
+import http.client
 import json
 import time
 import urllib.error
@@ -15,6 +16,14 @@ from rag.config import (
     env_value,
 )
 from rag.logutil import log
+
+# Network failures: timeouts, refused, reset or dropped connections, truncated
+# bodies. URLError, TimeoutError and ConnectionResetError are all OSError;
+# IncompleteRead and RemoteDisconnected are http.client errors.
+TRANSPORT_ERRORS = (OSError, http.client.HTTPException)
+# A response we cannot read: not JSON (JSONDecodeError is a ValueError), or
+# missing 'results' / 'index' / 'relevance_score', or the wrong shape.
+BAD_RESPONSE_ERRORS = (ValueError, KeyError, TypeError)
 
 
 class RerankUnavailable(Exception):
@@ -89,9 +98,9 @@ class RerankerAdapter:
         self.timeout = timeout
 
     def rank(self, question: str, documents: list[str], top_n: int) -> list[int]:
-        """Retry once on timeout, connection errors, HTTP 429 or 5xx.
+        """Retry once on network errors, HTTP 429 or 5xx; anything else fails at once.
 
-        Other HTTP 4xx errors (bad key, bad request) fail immediately.
+        Every failure becomes RerankUnavailable, so the caller can keep the fused order.
         """
         if not documents:
             return []
@@ -106,20 +115,22 @@ class RerankerAdapter:
                     top_n,
                     self.timeout,
                 )
-                log("rerank", f"documents={len(documents)} ranked={len(order)}")
-                return order
-            except urllib.error.HTTPError as error:
-                if error.code not in _retryable_status(error.code):
+            except urllib.error.HTTPError as error:  # before OSError: it is one
+                if not _is_retryable_status(error.code):
                     raise RerankUnavailable(f"HTTP {error.code}") from error
                 last_error = error
-            except (TimeoutError, urllib.error.URLError) as error:
+            except TRANSPORT_ERRORS as error:
                 last_error = error
+            except BAD_RESPONSE_ERRORS as error:
+                raise RerankUnavailable(f"unreadable response: {error!r}") from error
+            else:
+                log("rerank", f"documents={len(documents)} ranked={len(order)}")
+                return order
             if attempt < RERANK_RETRIES:
                 time.sleep(RERANK_RETRY_DELAY_SECONDS)
-        raise RerankUnavailable(str(last_error))
+        raise RerankUnavailable(f"{type(last_error).__name__}: {last_error}")
 
 
-def _retryable_status(code: int) -> set[int]:
-    if code == 429 or code >= 500:
-        return {code}
-    return set()
+def _is_retryable_status(code: int) -> bool:
+    """429 (rate limit) and 5xx (server trouble) can pass; other 4xx will not."""
+    return code == 429 or code >= 500
