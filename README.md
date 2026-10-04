@@ -8,7 +8,7 @@ A question-answering tool over the policy documents in `docs/`: HR, Health & Wel
 
 **Retrieval.** Clean the question in code, reject junk, and extract policy and version filters in code. Decide lookup versus compare by comparing the question's embedding to a few example questions. Then run dense search (Chroma) and BM25 on the same filtered chunks, fuse the ranks with reciprocal rank fusion (k=60), and rerank the shortlist with Cohere. If Cohere is missing or fails, the fused order is used and a warning is logged. A comparison runs that search once per version and pairs sections by normalized title.
 
-**Generation.** Pick the lookup or compare prompt file, wrap passages in `<source>` tags, pass the original question and the route the code chose, and ask Ollama for JSON (`status` plus claims, each with a `chunk_id`). The printed answer is rendered from those claims, with a source for each one.
+**Generation.** Pick the lookup or compare prompt file, wrap passages in `<source>` tags, pass the original question and the route the code chose, and ask Ollama for JSON (`status` plus claims, each with a `chunk_id`). The printed answer is those claims as plain sentences, a blank line, then the sources.
 
 ```mermaid
 flowchart LR

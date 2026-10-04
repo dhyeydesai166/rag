@@ -118,33 +118,32 @@ def parse_answer(raw: str) -> Answer:
 
 
 def render(answer: Answer, sources: dict[str, dict]) -> str:
-    """One line per claim with a [n] marker, then only the sources those claims cite."""
+    """Plain sentences, a blank line, then only the sources those sentences cite."""
     if answer.status == "not_in_sources":
         return NOT_IN_SOURCES_MESSAGE
-    numbers: dict[str, int] = {}
     cited: list[dict] = []
-    lines = []
+    seen: set[str] = set()
+    sentences = []
     for claim in answer.claims:
         source = sources.get(claim.chunk_id)
         if source is None:
             warn("generate", f"dropping claim with unknown chunk_id={claim.chunk_id}")
             continue
-        if claim.chunk_id not in numbers:
-            numbers[claim.chunk_id] = len(cited) + 1
+        if claim.chunk_id not in seen:
+            seen.add(claim.chunk_id)
             cited.append(source)
-        lines.append(f"{claim.text} [{numbers[claim.chunk_id]}]")
-    if not lines:
+        sentences.append(claim.text.strip())
+    if not sentences:
         return NOT_IN_SOURCES_MESSAGE
-    body = "\n".join(lines)
     if answer.status == "conflicting":
-        body = "The sources disagree:\n" + body
+        sentences.insert(0, "The sources disagree.")
     listing = ["Sources"]
     for index, source in enumerate(cited, start=1):
         policy = source["policy"]
         version = source["version"]
         heading = source["heading_path"]
         listing.append(f"[{index}] {policy} {version}, {heading}")
-    return body + "\n\n" + "\n".join(listing)
+    return " ".join(sentences) + "\n\n" + "\n".join(listing)
 
 
 @dataclass

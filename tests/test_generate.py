@@ -212,7 +212,7 @@ def test_schema_limits_chunk_ids_to_the_sent_sources():
     ] == ["a", "b"]
 
 
-def test_answer_is_rendered_with_per_claim_sources():
+def test_answer_is_plain_sentences_then_sources():
     model = RecordingModel(
         json.dumps(
             {
@@ -237,7 +237,7 @@ def test_answer_is_rendered_with_per_claim_sources():
     }
     result = generate("who gets cake?", _lookup([CAKE, other]), model)
     assert result.text == (
-        "The leader of the other pod must be offered a slice by default. [1]\n"
+        "The leader of the other pod must be offered a slice by default.\n"
         "\n"
         "Sources\n"
         "[1] HR Policy 2.0, 7. Shared Refrigerator Policy > 7.2 Cake-Sharing Default"
@@ -262,7 +262,9 @@ def test_conflicting_status_is_labeled():
         )
     )
     result = generate("who gets cake?", _lookup([CAKE]), model)
-    assert result.text.startswith("The sources disagree:\nCake is required. [1]")
+    assert result.text.startswith(
+        "The sources disagree. Cake is required.\n\nSources\n"
+    )
 
 
 def test_invalid_json_becomes_not_in_sources_with_a_warning(rag_logs):
