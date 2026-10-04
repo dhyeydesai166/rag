@@ -67,12 +67,15 @@ def main(argv=None) -> int:
     reranker = make_reranker()
     examples = embed_examples(embedder)
     rows = []
-    for case in CASES:
+    for index, case in enumerate(CASES):
         started = time.perf_counter()
         found = retrieve(case["question"], embedder, database, reranker, examples)
         row = score_case(case, found)
         row["latency"] = time.perf_counter() - started
         rows.append(row)
+        # Trial Cohere keys allow about 10 rerank calls a minute.
+        if index < len(CASES) - 1:
+            time.sleep(6)
     manifest = load_manifest(db_path)
     build_id = manifest.get("active_build_id") or ""
     build = manifest.get("builds", {}).get(build_id, {})

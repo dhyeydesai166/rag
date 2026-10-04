@@ -88,14 +88,18 @@ def main(argv=None) -> int:
     runs = []
     print("run  misses  inventions  clean_cases  route_ok")
     for number in range(1, args.runs + 1):
-        rows = [
-            score_case(
-                case,
-                retrieve(case["question"], embedder, database, reranker, examples),
-                model,
+        rows = []
+        for index, case in enumerate(CASES):
+            rows.append(
+                score_case(
+                    case,
+                    retrieve(case["question"], embedder, database, reranker, examples),
+                    model,
+                )
             )
-            for case in CASES
-        ]
+            # Trial Cohere keys allow about 10 rerank calls a minute.
+            if index < len(CASES) - 1 or number < args.runs:
+                time.sleep(6)
         summary = totals(rows)
         runs.append({"run": number, "totals": summary, "cases": rows})
         print(format_totals(number, summary))

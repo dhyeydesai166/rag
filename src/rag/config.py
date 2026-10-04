@@ -102,8 +102,8 @@ RERANK_MODEL = "rerank-v3.5"
 RERANK_TOP_N = 3
 # Bump the suffix (lookup_v2) instead of editing a prompt in place, so every
 # eval result names the exact prompt it used.
-LOOKUP_PROMPT = "lookup_v1"
-COMPARE_PROMPT = "compare_v1"
+LOOKUP_PROMPT = "lookup_v2"
+COMPARE_PROMPT = "compare_v2"
 # Temperature 0 and a fixed seed: the same question and passages give the same
 # answer, so eval runs are comparable and regressions are visible.
 GENERATION_TEMPERATURE = 0

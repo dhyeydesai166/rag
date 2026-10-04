@@ -22,5 +22,5 @@ COMPARE_EXAMPLES = (
     "Did the rules about breaks get stricter?",
     "Compare the old and new rules for leave.",
     "What is different between version 1.0 and 2.0?",
-    "How did the token rules change?",
+    "How did that rule change?",
 )
