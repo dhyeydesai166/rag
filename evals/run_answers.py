@@ -9,7 +9,7 @@ from pathlib import Path
 
 import ollama
 
-from adapter.database_adapter import DatabaseAdapter
+from adapter.database_adapter import open_active_index
 from adapter.embedding_adapter import EmbeddingAdapter
 from adapter.generation_adapter import GenerationAdapter
 from adapter.rerank_adapter import make_reranker
@@ -17,7 +17,7 @@ from evals.cases import CASES
 from evals.checks import check_answer, passages_by_id
 from rag.config import ANSWER_EVAL_RUNS, OLLAMA_HOST
 from rag.generate import generate
-from rag.manifest import active_build_id, load_manifest
+from rag.manifest import load_manifest
 from rag.provenance import provenance
 from rag.retrieve import _check_models, retrieve
 from rag.route import embed_examples
@@ -78,7 +78,7 @@ def main(argv=None) -> int:
     _check_models()
     client = ollama.Client(host=OLLAMA_HOST)
     embedder = EmbeddingAdapter()
-    database = DatabaseAdapter(args.db, active_build_id(args.db))
+    database = open_active_index(args.db)
     reranker = make_reranker()
     model = GenerationAdapter()
     examples = embed_examples(embedder)

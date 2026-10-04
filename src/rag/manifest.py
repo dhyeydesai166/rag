@@ -67,12 +67,39 @@ def save_manifest(db_path: Path, manifest: dict) -> None:
     os.replace(temporary, target)
 
 
+class IndexMissing(RuntimeError):
+    """The index the manifest names is missing or empty; ingest must run first.
+
+    A RuntimeError, so code that catches the old 'run ingest first' error still works.
+    """
+
+
 def active_build_id(db_path: Path) -> str:
     build_id = load_manifest(db_path).get("active_build_id") or ""
     if not build_id:
-        raise RuntimeError("run python -m rag.ingest first")
+        raise IndexMissing("run python -m rag.ingest first")
     return build_id
+
+
+def active_collection_name(manifest: dict) -> str:
+    """Collection the manifest points at. Older manifests only record a build id."""
+    if manifest.get("active_collection"):
+        return manifest["active_collection"]
+    build_id = manifest.get("active_build_id") or ""
+    if not build_id:
+        raise IndexMissing("run python -m rag.ingest first")
+    return f"{config.COLLECTION_PREFIX}__{build_id}"
+
+
+def staging_collection_name(build_id: str, stamp: str) -> str:
+    """A fresh name per rebuild, so the active collection is never written to."""
+    return f"{config.COLLECTION_PREFIX}__{build_id}__{stamp}"
 
 
 def utc_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def utc_stamp() -> str:
+    """UTC stamp with microseconds so two rebuilds in one second differ."""
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")

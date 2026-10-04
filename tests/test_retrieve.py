@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from adapter.database_adapter import DatabaseAdapter
 from rag.logutil import disable_question_log, enable_question_log, stage
+from rag.manifest import IndexMissing
 from rag.retrieve import main, retrieve
 from rag.route_examples import COMPARE_EXAMPLES, LOOKUP_EXAMPLES
 
@@ -26,7 +27,7 @@ def record(policy, version, heading, text):
 
 
 def store(path, rows, vectors):
-    database = DatabaseAdapter(path, "testbuild")
+    database = DatabaseAdapter(path, "testbuild", create=True)
     database.upsert(rows, vectors)
     return database
 
@@ -190,7 +191,7 @@ def test_empty_collection_skips_the_answer_call(tmp_path, rag_logs):
     found = retrieve(
         "who gets cake?",
         embedder,
-        DatabaseAdapter(tmp_path / "chroma", "testbuild"),
+        DatabaseAdapter(tmp_path / "chroma", "testbuild", create=True),
         reranker,
         embedder.examples(),
     )
@@ -282,6 +283,17 @@ def test_dense_and_lexical_use_the_same_filter():
     assert dense[0] == lexical[0]
 
 
+def test_main_reports_a_missing_index(monkeypatch, capsys):
+    monkeypatch.setattr("rag.retrieve._check_models", lambda: None)
+
+    def missing(path):
+        raise IndexMissing("index x not found; run python -m rag.ingest --rebuild")
+
+    monkeypatch.setattr("rag.retrieve.open_active_index", missing)
+    assert main(["who gets cake?"]) == 1
+    assert "run python -m rag.ingest --rebuild" in capsys.readouterr().out
+
+
 def test_junk_question_never_calls_a_model(monkeypatch, capsys):
     called = []
     monkeypatch.setattr("rag.retrieve._check_models", lambda: called.append("model"))
@@ -293,12 +305,11 @@ def test_junk_question_never_calls_a_model(monkeypatch, capsys):
 def test_main_prints_the_answer(monkeypatch, capsys):
     seen = {}
     monkeypatch.setattr("rag.retrieve._check_models", lambda: None)
-    monkeypatch.setattr("rag.retrieve.active_build_id", lambda path: "testbuild")
+    monkeypatch.setattr("rag.retrieve.open_active_index", lambda path: path)
     monkeypatch.setattr("rag.retrieve.EmbeddingAdapter", lambda: "embedder")
     monkeypatch.setattr("rag.retrieve.make_reranker", lambda: "reranker")
     monkeypatch.setattr("rag.retrieve.embed_examples", lambda embedder: ([], []))
     monkeypatch.setattr("rag.retrieve.GenerationAdapter", lambda: "generator")
-    monkeypatch.setattr("rag.retrieve.DatabaseAdapter", lambda path, build_id: path)
 
     def fake_retrieve(question, embedder, database, reranker, examples=None):
         seen["question"] = question
@@ -329,12 +340,11 @@ def test_main_prints_the_answer(monkeypatch, capsys):
 def test_main_uses_the_given_database(monkeypatch):
     seen = {}
     monkeypatch.setattr("rag.retrieve._check_models", lambda: None)
-    monkeypatch.setattr("rag.retrieve.active_build_id", lambda path: "testbuild")
+    monkeypatch.setattr("rag.retrieve.open_active_index", lambda path: path)
     monkeypatch.setattr("rag.retrieve.EmbeddingAdapter", lambda: None)
     monkeypatch.setattr("rag.retrieve.make_reranker", lambda: None)
     monkeypatch.setattr("rag.retrieve.embed_examples", lambda embedder: ([], []))
     monkeypatch.setattr("rag.retrieve.GenerationAdapter", lambda: None)
-    monkeypatch.setattr("rag.retrieve.DatabaseAdapter", lambda path, build_id: path)
 
     def fake_retrieve(question, embedder, database, reranker, examples=None):
         seen["database"] = database

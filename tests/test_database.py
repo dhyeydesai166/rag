@@ -1,4 +1,8 @@
-from adapter.database_adapter import DatabaseAdapter, where_for
+import pytest
+from chromadb.errors import InternalError
+
+from adapter.database_adapter import DatabaseAdapter, open_active_index, where_for
+from rag.manifest import IndexMissing, save_manifest
 
 BUILD = "testbuild"
 
@@ -25,7 +29,7 @@ def _record(
 
 
 def test_upsert_is_idempotent_and_keeps_metadata(tmp_path):
-    database = DatabaseAdapter(tmp_path / "chroma", BUILD)
+    database = DatabaseAdapter(tmp_path / "chroma", BUILD, create=True)
     records = [_record()]
     vectors = [[0.1, 0.2]]
     database.upsert(records, vectors)
@@ -42,7 +46,7 @@ def test_upsert_is_idempotent_and_keeps_metadata(tmp_path):
 
 
 def test_chunks_where_returns_text_and_metadata_without_vectors(tmp_path):
-    database = DatabaseAdapter(tmp_path / "chroma", BUILD)
+    database = DatabaseAdapter(tmp_path / "chroma", BUILD, create=True)
     database.upsert([_record()], [[0.25, 0.75]])
     stored = database.chunks_where(None)
     assert stored[0]["text"] == "Purpose body"
@@ -55,11 +59,12 @@ def test_chunks_where_returns_text_and_metadata_without_vectors(tmp_path):
 
 
 def test_chunks_where_on_an_empty_collection(tmp_path):
-    assert DatabaseAdapter(tmp_path / "chroma", BUILD).chunks_where(None) == []
+    database = DatabaseAdapter(tmp_path / "chroma", BUILD, create=True)
+    assert database.chunks_where(None) == []
 
 
 def test_delete_ids_removes_only_those_chunks(tmp_path):
-    database = DatabaseAdapter(tmp_path / "chroma", BUILD)
+    database = DatabaseAdapter(tmp_path / "chroma", BUILD, create=True)
     first = _record(record_id="HR Policy|1.0|1. Purpose")
     second = _record(record_id="HR Policy|1.0|2. Scope", source="hr.pdf")
     second["heading_path"] = "2. Scope"
@@ -72,7 +77,7 @@ def test_delete_ids_removes_only_those_chunks(tmp_path):
 
 
 def test_ids_for_source(tmp_path):
-    database = DatabaseAdapter(tmp_path / "chroma", BUILD)
+    database = DatabaseAdapter(tmp_path / "chroma", BUILD, create=True)
     keep = _record(source="hr.pdf")
     other = _record(record_id="Health Policy|1.0|1. Purpose", source="health.pdf")
     database.upsert([keep, other], [[0.1, 0.2], [0.2, 0.3]])
@@ -80,7 +85,7 @@ def test_ids_for_source(tmp_path):
 
 
 def test_vectors_by_embed_sha_returns_stored_vectors(tmp_path):
-    database = DatabaseAdapter(tmp_path / "chroma", BUILD)
+    database = DatabaseAdapter(tmp_path / "chroma", BUILD, create=True)
     record = _record()
     database.upsert([record], [[0.25, 0.75]])
     found = database.vectors_by_embed_sha([record["embed_sha256"], "missing"])
@@ -89,7 +94,7 @@ def test_vectors_by_embed_sha_returns_stored_vectors(tmp_path):
 
 
 def test_chunks_where_filters_by_policy_and_version(tmp_path):
-    database = DatabaseAdapter(tmp_path / "chroma", BUILD)
+    database = DatabaseAdapter(tmp_path / "chroma", BUILD, create=True)
     current = _record()
     older = _record(record_id="HR Policy|2.0|1. Purpose")
     older["version"] = "2.0"
@@ -100,7 +105,7 @@ def test_chunks_where_filters_by_policy_and_version(tmp_path):
 
 
 def test_dense_search_respects_the_filter(tmp_path):
-    database = DatabaseAdapter(tmp_path / "chroma", BUILD)
+    database = DatabaseAdapter(tmp_path / "chroma", BUILD, create=True)
     close = _record()
     far = _record(record_id="HR Policy|2.0|1. Purpose")
     far["version"] = "2.0"
@@ -108,6 +113,51 @@ def test_dense_search_respects_the_filter(tmp_path):
     database.upsert([close, far], [[1.0, 0.0], [0.0, 1.0]])
     ids = database.dense_search([1.0, 0.0], where_for([("HR Policy", "2.0")]), 5)
     assert ids == [far["id"]]
+
+
+def test_opening_a_missing_collection_raises_index_missing(tmp_path):
+    save_manifest(
+        tmp_path / "chroma",
+        {
+            "active_build_id": "abc",
+            "active_collection": "policies__abc",
+            "builds": {},
+            "files": {},
+        },
+    )
+    with pytest.raises(IndexMissing, match="not found"):
+        open_active_index(tmp_path / "chroma")
+
+
+def test_open_active_index_rejects_an_empty_collection(tmp_path):
+    DatabaseAdapter(tmp_path / "chroma", "policies__abc", create=True)
+    save_manifest(
+        tmp_path / "chroma",
+        {
+            "active_build_id": "abc",
+            "active_collection": "policies__abc",
+            "builds": {},
+            "files": {},
+        },
+    )
+    with pytest.raises(IndexMissing, match="empty"):
+        open_active_index(tmp_path / "chroma")
+
+
+def test_manifest_without_active_collection_opens_the_old_name(tmp_path):
+    database = DatabaseAdapter(tmp_path / "chroma", "policies__abc", create=True)
+    database.upsert([_record()], [[0.1, 0.2]])
+    save_manifest(
+        tmp_path / "chroma",
+        {"active_build_id": "abc", "builds": {}, "files": {}},
+    )
+    assert open_active_index(tmp_path / "chroma").count() == 1
+
+
+def test_create_refuses_an_existing_collection(tmp_path):
+    DatabaseAdapter(tmp_path / "chroma", BUILD, create=True)
+    with pytest.raises(InternalError):
+        DatabaseAdapter(tmp_path / "chroma", BUILD, create=True)
 
 
 def test_where_for_one_and_many_pairs():

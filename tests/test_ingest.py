@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from adapter.database_adapter import DatabaseAdapter
-from rag.ingest import ingest, main
+from adapter.database_adapter import open_active_index
+from rag.ingest import check_staged_index, ingest, main
 from rag.manifest import active_build_id, load_manifest, save_manifest
 
 DOCS = Path(__file__).resolve().parents[1] / "docs"
@@ -41,7 +41,7 @@ def test_ingest_stores_pdf_and_docx_versions(tmp_path, rag_logs):
     db_path = tmp_path / "chroma"
     report = ingest(DOCS, embedder, db_path)
     assert report.embedded > 0
-    database = DatabaseAdapter(db_path, active_build_id(db_path))
+    database = open_active_index(db_path)
     stored = database.collection.get(include=["metadatas", "documents"])
     sources = {meta["source"] for meta in stored["metadatas"]}
     versions: dict[str, set[str]] = {}
@@ -174,7 +174,7 @@ def test_changed_file_replaces_its_chunks(tmp_path):
     (docs / "a.pdf").write_bytes(b"one-edited")
     files["a.pdf"] = _loaded("a.pdf", "HR Policy", "1.0", "1. Revised", "Alpha text.")
     ingest(docs, FakeEmbedder(), db_path, read_file=read_file)
-    database = DatabaseAdapter(db_path, active_build_id(db_path))
+    database = open_active_index(db_path)
     ids = set(database.collection.get()["ids"])
     assert "HR Policy|1.0|1. Purpose" not in ids
     assert "HR Policy|1.0|1. Revised" in ids
@@ -224,7 +224,7 @@ def test_deleted_file_removes_its_chunks(tmp_path):
         docs, FakeEmbedder(), db_path, read_file=lambda path: files[path.name]
     )
     assert report.removed == ["b.docx"]
-    database = DatabaseAdapter(db_path, active_build_id(db_path))
+    database = open_active_index(db_path)
     ids = database.collection.get()["ids"]
     assert ids == ["HR Policy|1.0|1. Purpose"]
 
@@ -253,7 +253,7 @@ def test_crash_before_manifest_save_is_repaired_on_next_run(tmp_path, monkeypatc
     ingest(docs, FakeEmbedder(), db_path, read_file=lambda path: state["body"])
     manifest = load_manifest(db_path)
     assert manifest["files"]["a.pdf"]["chunk_ids"] == ["HR Policy|1.0|1. Revised"]
-    database = DatabaseAdapter(db_path, manifest["active_build_id"])
+    database = open_active_index(db_path)
     assert database.collection.get()["ids"] == ["HR Policy|1.0|1. Revised"]
 
 
@@ -276,8 +276,10 @@ def test_changing_chunk_params_triggers_a_rebuild_and_swap(tmp_path, monkeypatch
         settings=Settings(anonymized_telemetry=False),
     )
     names = {collection.name for collection in client.list_collections()}
-    assert f"policies__{second}" in names
-    assert f"policies__{first}" not in names
+    active = load_manifest(db_path)["active_collection"]
+    assert active in names
+    assert len(names) == 1
+    assert active.startswith(f"policies__{second}__")
     assert load_manifest(db_path)["active_build_id"] == second
 
 
@@ -293,3 +295,123 @@ def test_rebuild_flag_forces_a_rebuild(tmp_path):
     )
     assert report.embedded == 1
     assert embedder.texts
+
+
+def _collection_names(db_path):
+    import chromadb
+    from chromadb.config import Settings
+
+    client = chromadb.PersistentClient(
+        path=str(db_path),
+        settings=Settings(anonymized_telemetry=False),
+    )
+    return {collection.name for collection in client.list_collections()}
+
+
+def test_corrupt_file_during_rebuild_keeps_the_old_index(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    sources = [
+        DOCS / "Doofenshmirtz Evil Inc - HR Policy v1.0.pdf",
+        DOCS / "Doofenshmirtz Evil Inc - Health Policy v1.0.pdf",
+    ]
+    for source in sources:
+        (docs / source.name).write_bytes(source.read_bytes())
+    db_path = tmp_path / "chroma"
+    ingest(docs, FakeEmbedder(), db_path)
+    before_count = open_active_index(db_path).count()
+    before = load_manifest(db_path)
+    (docs / "zz-corrupt.pdf").write_bytes(b"not a pdf")
+    with pytest.raises(ValueError, match="empty extract"):
+        ingest(docs, FakeEmbedder(), db_path, rebuild=True)
+    assert open_active_index(db_path).count() == before_count
+    assert load_manifest(db_path) == before
+    assert _collection_names(db_path) == {before["active_collection"]}
+
+
+def test_validation_failure_during_rebuild_keeps_the_old_index(tmp_path, monkeypatch):
+    docs = tmp_path / "docs"
+    _write_docs(docs, [("a.pdf", b"a")])
+    loaded = _loaded("a.pdf", "HR Policy", "1.0", "1. Purpose", "Alpha text.")
+    db_path = tmp_path / "chroma"
+    ingest(docs, FakeEmbedder(), db_path, read_file=lambda path: loaded)
+    before_count = open_active_index(db_path).count()
+
+    def bad_chunk(blocks, policy, version, source):
+        return [
+            {
+                "id": "HR Policy|1.0|1. Purpose",
+                "text": "Alpha text.",
+                "policy": policy,
+                "section": "1. Purpose",
+                "heading_path": "1. Purpose",
+                "parent_id": "HR Policy|1.0",
+                "source": source,
+                "ordinal": None,
+            }
+        ]
+
+    monkeypatch.setattr("rag.ingest.chunk", bad_chunk)
+    error = ingest(
+        docs, FakeEmbedder(), db_path, read_file=lambda path: loaded, rebuild=True
+    )
+    assert error == "missing field: version"
+    assert open_active_index(db_path).count() == before_count
+
+
+def test_rebuild_switches_to_a_new_collection_and_drops_the_old_one(tmp_path):
+    docs = tmp_path / "docs"
+    _write_docs(docs, [("a.pdf", b"a")])
+    loaded = _loaded("a.pdf", "HR Policy", "1.0", "1. Purpose", "Alpha text.")
+    db_path = tmp_path / "chroma"
+    ingest(docs, FakeEmbedder(), db_path, read_file=lambda path: loaded)
+    first = load_manifest(db_path)["active_collection"]
+    ingest(docs, FakeEmbedder(), db_path, read_file=lambda path: loaded, rebuild=True)
+    second = load_manifest(db_path)["active_collection"]
+    build_id = load_manifest(db_path)["active_build_id"]
+    assert second != first
+    assert second.startswith(f"policies__{build_id}__")
+    assert _collection_names(db_path) == {second}
+
+
+def test_two_rebuilds_in_a_row_get_different_collection_names(tmp_path):
+    docs = tmp_path / "docs"
+    _write_docs(docs, [("a.pdf", b"a")])
+    loaded = _loaded("a.pdf", "HR Policy", "1.0", "1. Purpose", "Alpha text.")
+    db_path = tmp_path / "chroma"
+    ingest(docs, FakeEmbedder(), db_path, read_file=lambda path: loaded, rebuild=True)
+    first = load_manifest(db_path)["active_collection"]
+    ingest(docs, FakeEmbedder(), db_path, read_file=lambda path: loaded, rebuild=True)
+    second = load_manifest(db_path)["active_collection"]
+    assert first != second
+
+
+def test_file_without_chunks_fails_the_rebuild(tmp_path):
+    docs = tmp_path / "docs"
+    _write_docs(docs, [("a.pdf", b"a"), ("b.docx", b"b")])
+    files = {
+        "a.pdf": _loaded("a.pdf", "HR Policy", "1.0", "1. Purpose", "Alpha text."),
+        "b.docx": {
+            "policy": "HR Policy",
+            "version": "2.0",
+            "source": "b.docx",
+            "lines": [],
+            "blocks": [],
+        },
+    }
+    db_path = tmp_path / "chroma"
+    error = ingest(
+        docs, FakeEmbedder(), db_path, read_file=lambda path: files[path.name]
+    )
+    assert error == "no chunks from: b.docx"
+    assert not (db_path / "index_manifest.json").exists()
+
+
+def test_staged_index_missing_a_chunk_is_rejected():
+    class FakeDatabase:
+        def all_ids(self):
+            return ["a"]
+
+    files = {"a.pdf": {"chunk_ids": ["a", "b"]}}
+    with pytest.raises(ValueError, match="expected 2"):
+        check_staged_index(FakeDatabase(), files)

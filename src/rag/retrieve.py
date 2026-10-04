@@ -9,7 +9,7 @@ import time
 
 import ollama
 
-from adapter.database_adapter import DatabaseAdapter, where_for
+from adapter.database_adapter import open_active_index, where_for
 from adapter.embedding_adapter import EmbeddingAdapter
 from adapter.generation_adapter import GenerationAdapter
 from adapter.rerank_adapter import RerankUnavailable, make_reranker
@@ -36,7 +36,7 @@ from rag.logutil import (
     stage,
     warn,
 )
-from rag.manifest import active_build_id
+from rag.manifest import IndexMissing
 from rag.model_pins import check_model_pin
 from rag.question import JunkQuestion, clean_question, junk_reason
 from rag.route import classify_route, embed_examples, route_scores
@@ -260,7 +260,7 @@ def main(argv=None, trace: bool = False) -> int:
             return 2
         _check_models()
         embedder = EmbeddingAdapter()
-        database = DatabaseAdapter(db_path, active_build_id(db_path))
+        database = open_active_index(db_path)
         found = retrieve(
             question,
             embedder=embedder,
@@ -276,6 +276,9 @@ def main(argv=None, trace: bool = False) -> int:
     except JunkQuestion as error:
         print(str(error))
         return 2
+    except IndexMissing as error:
+        print(str(error))
+        return 1
     finally:
         if trace:
             disable_question_log()

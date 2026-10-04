@@ -7,12 +7,12 @@ import sys
 import time
 from pathlib import Path
 
-from adapter.database_adapter import DatabaseAdapter
+from adapter.database_adapter import open_active_index
 from adapter.embedding_adapter import EmbeddingAdapter
 from adapter.rerank_adapter import make_reranker
 from evals.cases import CASES
 from evals.checks import retrieval_hit, retrieved_ids
-from rag.manifest import active_build_id, load_manifest
+from rag.manifest import load_manifest
 from rag.provenance import provenance
 from rag.retrieve import _check_models, retrieve
 from rag.route import embed_examples
@@ -63,7 +63,7 @@ def main(argv=None) -> int:
 
     client = ollama.Client(host=OLLAMA_HOST)
     embedder = EmbeddingAdapter()
-    database = DatabaseAdapter(db_path, active_build_id(db_path))
+    database = open_active_index(db_path)
     reranker = make_reranker()
     examples = embed_examples(embedder)
     rows = []

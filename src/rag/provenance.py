@@ -73,6 +73,7 @@ def provenance(client, build: dict) -> dict:
             name: prompt_sha256(name) for name in (LOOKUP_PROMPT, COMPARE_PROMPT)
         },
         "build_id": build.get("build_id", ""),
+        "collection": build.get("collection", ""),
         "chunk_max_tokens": CHUNK_MAX_TOKENS,
         "rrf_k": RRF_K,
         "fused_top_k": FUSED_TOP_K,

@@ -69,7 +69,7 @@ COHERE_API_KEY=your-key
 
 ```bash
 python -m rag.ingest                  # incremental; skips unchanged files
-python -m rag.ingest --rebuild        # drop the build and ingest every file
+python -m rag.ingest --rebuild        # build a new index beside the old one, then switch
 python -m rag.retrieve "who gets cake?"
 python -m rag.trace "who gets cake?"  # same answer, plus stage timings
 python -m rag.chunker docs chunks.json
@@ -107,7 +107,7 @@ All of these live in `src/rag/config.py`.
 | `EMBED_DIM` | 768 | Detects a wrong model at the first embedding. |
 | `GENERATE_MODEL`, `GENERATE_MODEL_DIGESTS` | `gemma3:12b` (CI: `gemma3:4b`) | Pinned answer model. Override with the env variable. |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama default. Override with the env variable. |
-| `CHROMA_PATH`, `COLLECTION_PREFIX` | `chroma`, `policies` | One collection per build: `policies__<build_id>`. |
+| `CHROMA_PATH`, `COLLECTION_PREFIX` | `chroma`, `policies` | One collection per rebuild: `policies__<build_id>__<utc stamp>`; the manifest names the active one. |
 | `TITLE_SEARCH_LINES` | 5 | Where the "X Policy — Version N.N" title line is looked for. |
 | `CHUNK_MAX_TOKENS` | 256 | One subject per vector, far below the 2048-token embedding context. |
 | `CHUNK_OVERLAP_SENTENCES` | 1 | Keeps a rule readable across a split, only within one section. |
@@ -145,7 +145,7 @@ All of these live in `src/rag/config.py`.
 - Token counts are estimated. `truncate=False` makes an overflow an error instead of silent loss.
 - Policy aliases and the renamed-section map are hand-maintained. A new document may need a new entry.
 - The route classifier depends on example questions and a margin. Unusual phrasing can misroute. `python -m rag.trace` logs both similarities. The margin has not been calibrated here.
-- Chroma has no multi-statement transactions. Incremental updates are crash-safe by write ordering. A query during an incremental run may briefly see a partially updated file. A full rebuild swaps by switching the active build id after the new collection is complete.
+- Chroma has no multi-statement transactions. Incremental updates are crash-safe by write ordering. A query during an incremental run may briefly see a partially updated file. A full rebuild writes a new collection, checks it, then switches the manifest. A failed rebuild leaves the old index untouched. A query that starts just before the switch may fail once when the old collection is dropped; run it again.
 - Answer checks are string and number checks. They catch wrong numbers, stale facts, unsupported change claims, and missing facts. They do not catch every paraphrase error. Word numbers ("three") are covered by required facts, not by the number rule.
 - Cohere may change the model behind `rerank-v3.5`.
 - `validate.py` still validates each record twice. That second attempt stays until compliance clears removing it.

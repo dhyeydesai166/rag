@@ -1,15 +1,17 @@
-"""Chroma store for one embedding build.
+"""Chroma store for one collection.
 
-Each build has its own collection so vectors from different models or
-chunking settings are never mixed. Metadata cannot be None, so an unsplit
-chunk stores ordinal 0.
+Reads open the collection the manifest names and never create an empty one.
+A rebuild writes a new collection, then the manifest switches to it.
+Metadata cannot be None, so an unsplit chunk stores ordinal 0.
 """
 
 import chromadb
 from chromadb.config import Settings
+from chromadb.errors import NotFoundError
 
 from rag.config import COLLECTION_PREFIX
 from rag.logutil import log
+from rag.manifest import IndexMissing, active_collection_name, load_manifest
 
 
 def where_for(pairs: list[tuple[str, str]]) -> dict | None:
@@ -27,18 +29,38 @@ def where_for(pairs: list[tuple[str, str]]) -> dict | None:
 
 
 class DatabaseAdapter:
-    def __init__(self, path, build_id: str):
+    def __init__(self, path, name: str, create: bool = False):
+        """Open an existing collection, or create a new one when `create` is True.
+
+        Why two modes: reads must never create an empty index by accident, and
+        a rebuild must never write into a collection that already exists.
+        """
         self.path = str(path)
-        self.build_id = build_id
-        self.name = f"{COLLECTION_PREFIX}__{build_id}"
+        self.name = name
         self.client = chromadb.PersistentClient(
             path=self.path,
             settings=Settings(anonymized_telemetry=False),
         )
-        self.collection = self.client.get_or_create_collection(
-            name=self.name,
-            metadata={"hnsw:space": "cosine"},
-        )
+        if create:
+            self.collection = self.client.create_collection(
+                name=name, metadata={"hnsw:space": "cosine"}
+            )
+        else:
+            self.collection = self._existing(name)
+
+    def _existing(self, name: str):
+        try:
+            return self.client.get_collection(name=name)
+        except NotFoundError as error:
+            raise IndexMissing(
+                f"index {name} not found; run python -m rag.ingest --rebuild"
+            ) from error
+
+    def count(self) -> int:
+        return self.collection.count()
+
+    def all_ids(self) -> list[str]:
+        return list(self.collection.get(include=[])["ids"])
 
     def upsert(self, records: list[dict], vectors: list[list[float]]) -> None:
         if not records:
@@ -151,3 +173,33 @@ class DatabaseAdapter:
             "embed_sha256": record.get("embed_sha256", ""),
             "ordinal": int(record.get("ordinal") or 0),
         }
+
+
+def open_active_index(db_path) -> DatabaseAdapter:
+    """Open the collection the manifest names; fail loudly if it is missing or empty.
+
+    Why: an empty index makes every answer 'not in the documents', which hides
+    a broken setup behind a plausible reply.
+    """
+    name = active_collection_name(load_manifest(db_path))
+    database = DatabaseAdapter(db_path, name)
+    if database.count() == 0:
+        raise IndexMissing(f"index {name} is empty; run python -m rag.ingest --rebuild")
+    return database
+
+
+def drop_collections_except(path, keep: str) -> list[str]:
+    """Drop every policies__ collection except `keep`; return the dropped names.
+
+    Why: old builds and leftovers from an interrupted rebuild are removed only
+    after the manifest already points at `keep`.
+    """
+    client = chromadb.PersistentClient(
+        path=str(path), settings=Settings(anonymized_telemetry=False)
+    )
+    prefix = f"{COLLECTION_PREFIX}__"
+    names = sorted(collection.name for collection in client.list_collections())
+    dropped = [name for name in names if name.startswith(prefix) and name != keep]
+    for name in dropped:
+        client.delete_collection(name)
+    return dropped

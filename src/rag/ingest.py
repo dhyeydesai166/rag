@@ -11,18 +11,21 @@ from pathlib import Path
 
 import ollama
 
-from adapter.database_adapter import DatabaseAdapter
+from adapter.database_adapter import DatabaseAdapter, drop_collections_except
 from adapter.embedding_adapter import EmbeddingAdapter
 from rag.chunker import chunk
 from rag.config import EMBED_MODEL, EMBED_MODEL_DIGEST, OLLAMA_HOST
 from rag.logutil import log
 from rag.manifest import (
+    active_collection_name,
     compute_build_id,
     file_sha256,
     index_params,
     load_manifest,
     save_manifest,
+    staging_collection_name,
     utc_now,
+    utc_stamp,
 )
 from rag.model_pins import check_model_pin
 from rag.reader import SUPPORTED, read
@@ -108,45 +111,87 @@ def _summary(report: IngestReport) -> IngestReport:
     return report
 
 
-def rebuild_index(directory, embedder, db_path, params, build_id, read_file):
-    """Build a complete new collection, then point the manifest at it.
+class RebuildFailed(ValueError):
+    """The staged collection is not complete; the active index was not touched."""
 
-    Why: vectors from different models or chunking settings must never be mixed
-    in one index. Queries keep using the old build until the swap.
-    """
-    db_path = Path(db_path)
-    previous = load_manifest(db_path)
-    old_ids = [key for key in previous.get("builds", {}) if key != build_id]
-    database = DatabaseAdapter(db_path, build_id)
-    database.drop()
-    database = DatabaseAdapter(db_path, build_id)
+
+def fill_collection(
+    database, directory, embedder, read_file
+) -> tuple[dict, IngestReport]:
+    """Chunk, validate, embed, and store every policy file into `database`."""
     report = IngestReport([], [], [], 0, 0)
-    file_entries = {}
+    files = {}
     for path in list_policy_files(directory):
         records = _validated(path, read_file)
         if isinstance(records, str):
-            database.drop()
-            return records
+            raise RebuildFailed(records)
         embedded, reused = replace_file_chunks(database, embedder, records, [])
-        file_entries[path.name] = {
+        files[path.name] = {
             "sha256": file_sha256(path),
             "chunk_ids": [record["id"] for record in records],
         }
         report.updated.append(path.name)
         report.embedded += embedded
         report.reused += reused
-    builds = dict(previous.get("builds", {}))
-    builds[build_id] = {**params, "created_at": utc_now()}
-    manifest = {
-        "active_build_id": build_id,
-        "builds": builds,
-        "files": file_entries,
-    }
-    save_manifest(db_path, manifest)
-    for old_id in old_ids:
-        DatabaseAdapter(db_path, old_id).drop()
-    manifest["builds"] = {build_id: builds[build_id]}
-    save_manifest(db_path, manifest)
+    return files, report
+
+
+def check_staged_index(database, files: dict) -> None:
+    """Raise RebuildFailed unless the collection holds exactly the expected chunks.
+
+    Why: a rebuild must never replace a good index with an empty or partial one.
+    """
+    empty = sorted(name for name, entry in files.items() if not entry["chunk_ids"])
+    if empty:
+        raise RebuildFailed(f"no chunks from: {', '.join(empty)}")
+    expected = [chunk_id for entry in files.values() for chunk_id in entry["chunk_ids"]]
+    if len(expected) != len(set(expected)):
+        raise RebuildFailed("the same chunk id comes from two places")
+    stored = set(database.all_ids())
+    if not stored or stored != set(expected):
+        raise RebuildFailed(
+            f"staged index has {len(stored)} chunks, expected {len(expected)}"
+        )
+
+
+def switch_active_collection(
+    db_path, build_id: str, params: dict, name: str, files: dict
+) -> None:
+    """Point the manifest at the new collection in one atomic file replace."""
+    build = {**params, "collection": name, "created_at": utc_now()}
+    save_manifest(
+        db_path,
+        {
+            "active_build_id": build_id,
+            "active_collection": name,
+            "builds": {build_id: build},
+            "files": files,
+        },
+    )
+
+
+def rebuild_index(directory, embedder, db_path, params, build_id, read_file):
+    """Build a complete new collection beside the active one, check it, then switch.
+
+    Why: queries keep using the old index until a checked replacement exists,
+    so any failure leaves the old index exactly as it was.
+    """
+    db_path = Path(db_path)
+    name = staging_collection_name(build_id, utc_stamp())
+    staging = DatabaseAdapter(db_path, name, create=True)
+    try:
+        files, report = fill_collection(staging, directory, embedder, read_file)
+        check_staged_index(staging, files)
+    except RebuildFailed as error:
+        staging.drop()
+        log("ingest", "rebuild failed; active index unchanged")
+        return str(error)
+    except Exception:
+        staging.drop()
+        log("ingest", "rebuild failed; active index unchanged")
+        raise
+    switch_active_collection(db_path, build_id, params, name, files)
+    drop_collections_except(db_path, keep=name)
     return _summary(report)
 
 
@@ -166,7 +211,7 @@ def ingest(directory, embedder, db_path, read_file=read, rebuild: bool = False):
     if rebuild or build_id != manifest.get("active_build_id"):
         return rebuild_index(directory, embedder, db_path, params, build_id, read_file)
 
-    database = DatabaseAdapter(db_path, build_id)
+    database = DatabaseAdapter(db_path, active_collection_name(manifest))
     report = IngestReport([], [], [], 0, 0)
     seen = set()
     for path in files:

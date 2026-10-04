@@ -19,8 +19,8 @@ GENERATE_MODEL_DIGESTS = {
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 CHROMA_PATH = "chroma"
-# One collection per build: policies__<build_id>. A new model or chunking
-# setting must not mix vectors with the previous build.
+# Collections are policies__<build_id>__<utc stamp>: one per rebuild, so a rebuild
+# never writes into the collection queries are using. The manifest names the active one.
 COLLECTION_PREFIX = "policies"
 
 # The title is the second line in every current document; 5 leaves room for a

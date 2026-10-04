@@ -33,6 +33,7 @@ def test_provenance_records_prompts_models_and_the_build(monkeypatch):
     record = provenance(Client(), {"build_id": "build1"})
     assert record["git_sha"] == "abc123"
     assert record["build_id"] == "build1"
+    assert record["collection"] == ""
     assert record["embed_digest"] == "digest"
     assert record["temperature"] == 0
     assert record["seed"] == 42
