@@ -273,7 +273,7 @@ TOKEN_V2 = {
     "version": "2.0",
     "text": "Every employee is issued 500,000 (five hundred thousand) tokens at the "
     "start of each six-hour cycle, replenished automatically — a reduction from the "
-    '1,000,000 issued under Version 1.0. Finance has described this adjustment as '
+    "1,000,000 issued under Version 1.0. Finance has described this adjustment as "
     '"necessary" and "overdue."',
 }
 TOKEN_PAIR = [
