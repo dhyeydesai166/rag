@@ -130,6 +130,8 @@ All of these live in `src/rag/config.py`.
 | `GENERATION_TEMPERATURE`, `GENERATION_SEED` | 0, 42 | Repeatable answers. |
 | `ANSWER_EVAL_RUNS` | 3 | Reveals nondeterminism at modest cost. |
 
+`lookup_v3`, `compare_v3`, and `compare_v4` were tried and did not beat `lookup_v2` and `compare_v2`. They stay in `src/rag/prompts/` so those trials remain visible.
+
 ## Design decisions
 
 - **Heading-based chunks, a 256-token cap, one-sentence overlap.** A section is both the retrieval unit and a citation a person can open. The cap keeps one subject per vector. Overlap stays inside one section so topics are not mixed.
