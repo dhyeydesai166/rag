@@ -1,51 +1,151 @@
-# Doofenshmirtz Evil Inc RAG
+# Doofenshmirtz Evil Inc policy RAG
 
-Python 3.11+, a running Ollama server, and a Cohere key.
+A question-answering tool over the policy documents in `docs/`: HR, Health & Wellness, Preparedness, and Time & Usage. Some policies have two versions. It answers questions about the current rules, about a named older version, and about what changed between versions. Every statement cites the section it came from. When the documents do not cover a question, it says so.
+
+## How it works
+
+**Ingestion.** Read each file, take the policy name and version from the document's title line, split it into heading-based chunks (one per subsection, plus a section intro when that intro has text), and cap a chunk at about 256 tokens by splitting on sentences. Every chunk gets a stable id and content hashes. Only files that changed are written, into a Chroma collection that belongs to one build (one embedding model and one set of chunking settings). A manifest records which files and which build are active.
+
+**Retrieval.** Clean the question in code, reject junk, and extract policy and version filters in code. Decide lookup versus compare by comparing the question's embedding to a few example questions. Then run dense search (Chroma) and BM25 on the same filtered chunks, fuse the ranks with reciprocal rank fusion (k=60), and rerank the shortlist with Cohere. If Cohere is missing or fails, the fused order is used and a warning is logged. A comparison runs that search once per version and pairs sections by normalized title.
+
+**Generation.** Pick the lookup or compare prompt file, wrap passages in `<source>` tags, pass the original question and the route the code chose, and ask Ollama for JSON (`status` plus claims, each with a `chunk_id`). The printed answer is rendered from those claims, with a source for each one.
+
+```mermaid
+flowchart LR
+    subgraph Ingestion
+        A[docs: pdf, docx] --> B[reader: text + title line<br/>policy, version]
+        B --> C[chunker: one chunk per subsection<br/>+ section intro]
+        C --> D[split_long_chunk<br/>max 256 tokens, 1-sentence overlap]
+        D --> E[ids + text_sha256 / embed_sha256]
+        E --> F{file hash changed?}
+        F -- no --> G[skip file]
+        F -- yes --> H[reuse or embed vectors<br/>truncate=False, dim check]
+        H --> I[(Chroma collection<br/>policies__build_id)]
+        I --> J[index_manifest.json<br/>build_id, digest, dim, params, file hashes]
+    end
+    subgraph Retrieval
+        Q[question] --> Q1[clean_question + junk check]
+        Q1 --> Q2[extract_filters<br/>policy, versions, search_text]
+        Q2 --> Q3[classify_route<br/>nearest example questions]
+        Q3 --> R1[dense top-k<br/>Chroma query + where]
+        Q3 --> R2[BM25 top-k<br/>embed_text, stemmed, score above 0]
+        R1 --> R3[rrf_fuse k=60<br/>tie-break: best rank, dense rank]
+        R2 --> R3
+        R3 --> R4[compare only:<br/>pair_by_title per version]
+        R3 --> R5[rerank_with_fallback<br/>Cohere, keep 3]
+        R4 --> R5
+    end
+    subgraph Generation
+        R5 --> G1[prompts: lookup_v1 or compare_v1]
+        G1 --> G2[source tags + original question + route]
+        G2 --> G3[Ollama format=JSON schema<br/>temperature 0, seed]
+        G3 --> G4[render claims with sources<br/>or not-in-sources message]
+    end
+    I -.-> R1
+    I -.-> R2
+```
+
+## Setup
+
+Python 3.11 or newer, and Ollama 0.35.1 (the version CI installs; this checkout had no local `ollama` binary to read).
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
-ollama pull embeddinggemma:latest
-ollama pull gemma3:4b
+pip install -r requirements-dev.lock && pip install -e . --no-deps
+ollama pull embeddinggemma:300m
 ollama pull gemma3:12b
 ```
 
-Put the key in `.env` in the repository root. That file is gitignored.
+Optional: put a Cohere key in `.env` (gitignored). Without it, retrieval uses the fused order and logs one warning.
 
 ```
 COHERE_API_KEY=your-key
 ```
 
-The clients use `OLLAMA_HOST`, or `http://127.0.0.1:11434` when that variable is unset. From this container, Ollama is on the host:
+`OLLAMA_HOST` defaults to `http://127.0.0.1:11434`.
+
+## Run
 
 ```bash
-export OLLAMA_HOST=http://host.docker.internal:11434
-```
-
-Ingest the policies, then ask a question. The question must be one quoted argument.
-
-```bash
-python -m rag.ingest
+python -m rag.ingest                  # incremental; skips unchanged files
+python -m rag.ingest --rebuild        # drop the build and ingest every file
 python -m rag.retrieve "who gets cake?"
+python -m rag.trace "who gets cake?"  # same answer, plus stage timings
+python -m rag.chunker docs chunks.json
 ```
 
-`ingest` reads `docs/` and writes `chroma/`. Pass other paths as `python -m rag.ingest docs chroma` and `python -m rag.retrieve "question" chroma`.
+`ingest` reads `docs/` and writes `chroma/` unless you pass other paths: `python -m rag.ingest docs chroma` and `python -m rag.retrieve "question" chroma`. A question that is not a question (for example `hi`) prints a short message and exits 2, without calling a model.
 
-Show stage logs and total latency:
-
-```bash
-python -m rag.trace "who gets cake?"
-```
-
-Run the unit tests. Unset `OLLAMA_HOST` for this command. `tests/test_config.py` expects the default host.
+## Test and evaluate
 
 ```bash
 env -u OLLAMA_HOST pytest
+ruff check .
+ruff format --check .
+python -m evals.run_retrieval
+python -m evals.run_answers --runs 3
 ```
 
-Run the live evaluation harness. This calls Ollama and Cohere and prints recall and accuracy.
+`pytest` does not need Ollama or Cohere. The two eval commands do need Ollama and the pinned models. They write `results/retrieval_eval.json` and `results/answer_eval.json` (gitignored) with provenance: git sha, date, model digests, prompt names and hashes, and the index build id.
 
-```bash
-OLLAMA_HOST=http://host.docker.internal:11434 pytest tests/test_eval.py::test_fixed_set_retrieval_and_answers -s -o addopts=
+The retrieval command exits 1 if a case takes the wrong route or its gold chunks are missing from the fused shortlist. The final top 3 is a gate only when Cohere actually ranked. The answer command prints, per run:
+
 ```
+run  misses  inventions  clean_cases  route_ok
+```
+
+A **miss** is something required that the answer left out (a fact, a gold citation, or a refusal when an answer was expected). An **invention** is something the answer said that the cited passage does not support (a number, a stale fact from another version, change language the source does not use, or an answer when the documents do not cover the question). Do not edit a case in `evals/cases.py` to match a model's output. Gold describes the documents. If a case is wrong about a document, fix it in its own commit that quotes the source text.
+
+## Configuration
+
+All of these live in `src/rag/config.py`.
+
+| Constant | Value | Why |
+|---|---|---|
+| `EMBED_MODEL`, `EMBED_MODEL_DIGEST` | `embeddinggemma:300m`, digest | Exact tag plus a digest check. A different model invalidates every vector. |
+| `EMBED_DIM` | 768 | Detects a wrong model at the first embedding. |
+| `GENERATE_MODEL`, `GENERATE_MODEL_DIGESTS` | `gemma3:12b` (CI: `gemma3:4b`) | Pinned answer model. Override with the env variable. |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama default. Override with the env variable. |
+| `CHROMA_PATH`, `COLLECTION_PREFIX` | `chroma`, `policies` | One collection per build: `policies__<build_id>`. |
+| `TITLE_SEARCH_LINES` | 5 | Where the "X Policy — Version N.N" title line is looked for. |
+| `CHUNK_MAX_TOKENS` | 256 | One subject per vector, far below the 2048-token embedding context. |
+| `CHUNK_OVERLAP_SENTENCES` | 1 | Keeps a rule readable across a split, only within one section. |
+| `CHUNKER_VERSION` | 2 | Part of `build_id`. Bump when chunking rules change. |
+| `SENTENCE_ABBREVIATIONS` | `a.m.`, `p.m.`, ... | Periods that do not end a sentence. |
+| `EMBED_BATCH_SIZE` | 64 | Small, retryable embedding requests. |
+| `MAX_QUESTION_CHARS` | 500 | Real questions are short. Longer input is usually pasted text. |
+| `FILLER_WORDS`, `KEYMASH_CONSONANT_RUN` | see file | Friendly rejection of non-questions. |
+| `POLICY_ALIASES`, `VERSION_PATTERN` | see file | Code-based filters. Only unambiguous aliases. |
+| `ROUTE_COMPARE_MARGIN` | 0.02 | Compare only when clearly closer to the compare examples. Not calibrated against a live server in this checkout; run `python -m rag.route report`. |
+| `DENSE_TOP_K`, `LEXICAL_TOP_K` | 20, 20 | Candidates per retriever. |
+| `BM25_K1`, `BM25_B` | 1.5, 0.75 | Standard BM25 defaults. |
+| `RRF_K` | 60 | Standard RRF constant. No single retriever dominates. |
+| `FUSED_TOP_K` | 20 | Shortlist size for the reranker. |
+| `RERANK_MODEL`, `RERANK_TOP_N` | `rerank-v3.5`, 3 | Final passages for the answer model. |
+| `RERANK_TIMEOUT_SECONDS`, `RERANK_RETRIES`, `RERANK_RETRY_DELAY_SECONDS` | 10, 1, 1.0 | Bounded wait, one retry, then fallback. |
+| `LOOKUP_PROMPT`, `COMPARE_PROMPT` | `lookup_v1`, `compare_v1` | Versioned prompt files. |
+| `GENERATION_TEMPERATURE`, `GENERATION_SEED` | 0, 42 | Repeatable answers. |
+| `ANSWER_EVAL_RUNS` | 3 | Reveals nondeterminism at modest cost. |
+
+## Design decisions
+
+- **Heading-based chunks, a 256-token cap, one-sentence overlap.** A section is both the retrieval unit and a citation a person can open. The cap keeps one subject per vector. Overlap stays inside one section so topics are not mixed.
+- **Filters and routing in code, not an LLM.** Policy, version, and route are deterministic, fast, and testable.
+- **Hybrid search (dense + BM25) on the same filtered set.** Vectors find paraphrases. BM25 finds exact terms, numbers, and named rules. The same filter means a version cannot leak through one of the two.
+- **RRF with k=60.** Combines ranks, not raw scores, which are not comparable across retrievers. Ties go to the chunk with the stronger single signal, then the better dense rank.
+- **Reranker with a fallback.** Cohere improves the final top 3. An outage or a missing key costs quality, not answers, and a warning is logged.
+- **Separate prompts as versioned files; passages as tagged data.** Lookup answers should not talk about changes. Passage text is data, including any instruction-like sentences inside it.
+- **Structured output with per-claim citations.** Every statement points at the chunk that supports it, which is what the answer checks read.
+- **Temperature 0 and a fixed seed.** Repeatable answers make eval runs comparable. Temperature 0 is stable, not a proof of bit-identical output across machines.
+- **Incremental ingest with build ids.** Unchanged files cost nothing. A model or chunking change rebuilds into a new collection and swaps, so vectors from different settings never mix.
+
+## Known limitations
+
+- Token counts are estimated. `truncate=False` makes an overflow an error instead of silent loss.
+- Policy aliases and the renamed-section map are hand-maintained. A new document may need a new entry.
+- The route classifier depends on example questions and a margin. Unusual phrasing can misroute. `python -m rag.trace` logs both similarities. The margin has not been calibrated here.
+- Chroma has no multi-statement transactions. Incremental updates are crash-safe by write ordering. A query during an incremental run may briefly see a partially updated file. A full rebuild swaps by switching the active build id after the new collection is complete.
+- Answer checks are string and number checks. They catch wrong numbers, stale facts, unsupported change claims, and missing facts. They do not catch every paraphrase error. Word numbers ("three") are covered by required facts, not by the number rule.
+- Cohere may change the model behind `rerank-v3.5`.
+- `validate.py` still validates each record twice. That second attempt stays until compliance clears removing it.

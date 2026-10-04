@@ -77,7 +77,8 @@ POLICY_ALIASES = {
 VERSION_PATTERN = r"\b\d+\.\d+(?:\.\d+)*\b"
 
 # Compare must beat lookup by this cosine margin. Similarities are only
-# compared within one question, so the scale is local to that question.
+# compared within one question. 0.02 is the starting value; calibrate with
+# `python -m rag.route report` when Ollama is available and record the value.
 ROUTE_COMPARE_MARGIN = 0.02
 
 # Standard Okapi BM25 defaults; the corpus is too small to tune them.
