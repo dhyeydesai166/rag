@@ -126,11 +126,11 @@ All of these live in `src/rag/config.py`.
 | `RERANK_MODEL`, `RERANK_TOP_N` | `rerank-v3.5`, 3 | Final passages for the answer model. |
 | `RERANK_TIMEOUT_SECONDS`, `RERANK_RETRIES`, `RERANK_RETRY_DELAY_SECONDS` | 10, 1, 1.0 | Bounded wait, one retry, then fallback. |
 | `EVAL_PAUSE_SECONDS` | 6 | Cohere trial keys allow 10 rerank calls/minute; only applied with a key. |
-| `LOOKUP_PROMPT`, `COMPARE_PROMPT` | `lookup_v2`, `compare_v2` | Versioned prompt files. Override with the env variables for a trial. |
+| `LOOKUP_PROMPT`, `COMPARE_PROMPT` | `lookup_v4`, `compare_v2` | Versioned prompt files. Override with the env variables for a trial. |
 | `GENERATION_TEMPERATURE`, `GENERATION_SEED` | 0, 42 | Repeatable answers. |
 | `ANSWER_EVAL_RUNS` | 3 | Reveals nondeterminism at modest cost. |
 
-`lookup_v3`, `compare_v3`, and `compare_v4` were tried and did not beat `lookup_v2` and `compare_v2`. They stay in `src/rag/prompts/` so those trials remain visible.
+`lookup_v4` is the active lookup prompt. On three runs with `gemma3:12b` and `compare_v2`, it had 2 misses and 0 inventions; `lookup_v2` had 3 and 0. `lookup_v3`, `compare_v3`, and `compare_v4` were tried earlier and did not beat `lookup_v2` and `compare_v2`. Those files stay in `src/rag/prompts/`.
 
 ## Design decisions
 

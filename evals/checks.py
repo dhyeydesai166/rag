@@ -7,6 +7,7 @@ the cited passage does not support. They are counted separately on purpose.
 import re
 from dataclasses import dataclass
 
+from rag.generate import same_claim
 from rag.models import Answer
 
 # Word stems, so 'reduced' and 'a reduction' both count. 'version N' counts
@@ -190,6 +191,14 @@ def check_answer(
     cited = {claim.chunk_id for claim in answer.claims}
     if case["gold_chunks"] and not cited & set(case["gold_chunks"]):
         misses.append("no gold chunk cited")
+    if case.get("cited_only_gold"):
+        for chunk_id in sorted(cited - set(case["gold_chunks"])):
+            misses.append(f"cited a chunk outside gold: {chunk_id}")
+    if case.get("no_repeated_claims"):
+        texts = [claim.text for claim in answer.claims]
+        for index, text in enumerate(texts):
+            if any(same_claim(text, earlier) for earlier in texts[:index]):
+                misses.append(f"repeated claim: {text!r}")
     answer_text = " ".join(claim.text for claim in answer.claims).lower()
     for options in case["required_facts"]:
         if not any(option.lower() in answer_text for option in options):

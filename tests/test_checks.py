@@ -357,6 +357,60 @@ def test_removed_section_is_not_judged_by_the_compare_rule():
     assert not any(item.startswith("claims a change") for item in result.misses)
 
 
+def test_repeated_claim_is_a_miss_when_the_case_forbids_it():
+    first = (
+        "The company maintains a limited stock of hazmat suits, reserved "
+        "exclusively for the top 10 employees on the Foosball Leaderboard "
+        "at the time of emergency."
+    )
+    second = "The top 10 ranked employees receive priority access to hazmat suits."
+    result = check_answer(
+        Answer(
+            status="answered",
+            claims=[
+                Claim(text=first, chunk_id="gold"),
+                Claim(text=second, chunk_id="other"),
+            ],
+        ),
+        {
+            "gold": {"text": first, "version": "2.0"},
+            "other": {"text": second, "version": "2.0"},
+        },
+        "lookup",
+        _case(
+            gold_chunks=["gold"],
+            required_facts=[],
+            stale_facts=[],
+            no_repeated_claims=True,
+        ),
+    )
+    assert any(item.startswith("repeated claim") for item in result.misses)
+
+
+def test_a_citation_outside_gold_is_a_miss_when_required():
+    result = check_answer(
+        Answer(
+            status="answered",
+            claims=[
+                Claim(text="Shelter in the refrigerator.", chunk_id="gold"),
+                Claim(text="Food belongs to nobody.", chunk_id="other"),
+            ],
+        ),
+        {
+            "gold": {"text": "Shelter in the refrigerator."},
+            "other": {"text": "Food belongs to nobody."},
+        },
+        "lookup",
+        _case(
+            gold_chunks=["gold"],
+            required_facts=[],
+            stale_facts=[],
+            cited_only_gold=True,
+        ),
+    )
+    assert "cited a chunk outside gold: other" in result.misses
+
+
 def test_lookup_answers_ignore_counterparts():
     answer = Answer(
         status="answered",

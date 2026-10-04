@@ -1,25 +1,26 @@
 # Prompt trials
 
-Active: `lookup_v2`, `compare_v2` (`src/rag/config.py`). A trial prompt stays in this
+Active: `lookup_v4`, `compare_v2` (`src/rag/config.py`). A trial prompt stays in this
 folder after it loses, so its scores can be reproduced: eval provenance records each
 prompt's name and sha256. Never edit a prompt file in place; add a new suffix.
 
 ## How these scores were produced
 
-`GENERATE_MODEL=gemma3:12b`, 3 runs, active prompts only:
+The first table is the earlier baseline: `GENERATE_MODEL=gemma3:12b`, 3 runs:
 
 `LOOKUP_PROMPT=lookup_v2 COMPARE_PROMPT=compare_v2 python -m evals.run_answers --runs 3`
 
 Misses and inventions are defined in the README. `lookup_v3`, `compare_v3`, and
-`compare_v4` were not scored in this pass.
+`compare_v4` were not scored in this pass. The later table is the comparison that
+made `lookup_v4` active.
 
 ## Results
 
 | Trial | Prompts | Answer model | Git sha | Run | Misses | Inventions | Clean cases | Cases with problems |
 |---|---|---|---|---|---|---|---|---|
-| v2 (active) | lookup_v2, compare_v2 | gemma3:12b | a74dbab | 1 | 2 | 0 | 19 | video-game-minutes, foosball-dispute-compare |
-| v2 (active) | lookup_v2, compare_v2 | gemma3:12b | a74dbab | 2 | 2 | 0 | 19 | video-game-minutes, foosball-dispute-compare |
-| v2 (active) | lookup_v2, compare_v2 | gemma3:12b | a74dbab | 3 | 2 | 0 | 19 | video-game-minutes, foosball-dispute-compare |
+| v2 | lookup_v2, compare_v2 | gemma3:12b | a74dbab | 1 | 2 | 0 | 19 | video-game-minutes, foosball-dispute-compare |
+| v2 | lookup_v2, compare_v2 | gemma3:12b | a74dbab | 2 | 2 | 0 | 19 | video-game-minutes, foosball-dispute-compare |
+| v2 | lookup_v2, compare_v2 | gemma3:12b | a74dbab | 3 | 2 | 0 | 19 | video-game-minutes, foosball-dispute-compare |
 
 All 21 questions took the expected route. Both misses were the same on every run:
 `video-game-minutes` returned `conflicting` where the case expects `answered`, and
@@ -35,7 +36,18 @@ All 21 questions took the expected route. Both misses were the same on every run
   describe a different section as the change."
 - `compare_v4`: keeps only the <missing>-side sentences of `compare_v3`.
 
-## Why v2 stayed
+## Why lookup_v4 replaced lookup_v2
 
-These three runs are the measured baseline for the active pair: 2 misses, 0 inventions,
-19 clean cases. The active names stay `lookup_v2` and `compare_v2`.
+The table above is the earlier baseline, scored before the repeated-claim check and the
+refrigerator case (21 questions). Scored again on the current 22 questions, three runs
+each, git sha `7cf3959-dirty`, `compare_v2` held fixed:
+
+| Trial | Prompts | Answer model | Run | Misses | Inventions | Clean cases | Cases with problems |
+|---|---|---|---|---|---|---|---|
+| v2 | lookup_v2, compare_v2 | gemma3:12b | 1–3 | 3 | 0 | 19 | video-game-minutes, hazmat, foosball-dispute-compare |
+| v4 (active) | lookup_v4, compare_v2 | gemma3:12b | 1–3 | 2 | 0 | 20 | dog-adoption, foosball-dispute-compare |
+
+All 22 questions took the expected route on every run. `lookup_v4` stopped treating the
+foosball limit as a conflict with video-game time, and it stopped repeating the hazmat
+rule. It drops the 5-day pet-leave base when the question asks about adopting a dog.
+`foosball-dispute-compare` still misses “removed”; that case uses `compare_v2`.

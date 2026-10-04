@@ -16,8 +16,8 @@ FIELDS = {
 
 
 def test_cases_have_the_migrated_set_and_unique_ids():
-    assert len(CASES) == 21
-    assert len({case["id"] for case in CASES}) == 21
+    assert len(CASES) == 22
+    assert len({case["id"] for case in CASES}) == 22
     assert sum(case["route"] == "compare" for case in CASES) == 4
 
 

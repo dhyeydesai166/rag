@@ -14,10 +14,11 @@ from rag.generate import (
     generate,
     load_prompt,
     prompt_sha256,
+    render,
     source_tag,
 )
 from rag.messages import NOT_IN_SOURCES_MESSAGE
-from rag.models import Answer
+from rag.models import Answer, Claim
 
 
 class FakeClient:
@@ -302,6 +303,79 @@ def test_prompt_hash_is_stable_and_names_the_file():
     assert len(lookup) == 64
     assert lookup == prompt_sha256("lookup_v1")
     assert lookup != prompt_sha256("compare_v1")
+
+
+def test_a_restated_claim_is_shown_once():
+    sources = {
+        "a": {
+            "policy": "Preparedness Policy",
+            "version": "2.0",
+            "heading_path": "4.2 Hazmat Suit Eligibility",
+        },
+        "b": {
+            "policy": "Preparedness Policy",
+            "version": "2.0",
+            "heading_path": "8.2 Equipment Eligibility",
+        },
+    }
+    answer = Answer(
+        status="answered",
+        claims=[
+            Claim(
+                text=(
+                    "The company maintains a limited stock of hazmat suits, "
+                    "reserved exclusively for the top 10 employees on the "
+                    "Foosball Leaderboard at the time of emergency."
+                ),
+                chunk_id="a",
+            ),
+            Claim(
+                text=(
+                    "The top 10 ranked employees receive priority access "
+                    "to hazmat suits."
+                ),
+                chunk_id="b",
+            ),
+        ],
+    )
+    text = render(answer, sources)
+    assert text.startswith("The company maintains a limited stock of hazmat suits")
+    assert "priority access" not in text
+    assert "8.2 Equipment Eligibility" not in text
+
+
+def test_an_exception_to_the_same_rule_stays_in_the_paragraph():
+    sources = {
+        "shelter": {
+            "policy": "Preparedness Policy",
+            "version": "2.0",
+            "heading_path": "4.1 Shelter Location",
+        },
+        "door": {
+            "policy": "Preparedness Policy",
+            "version": "2.0",
+            "heading_path": "4.1 Shelter Location door",
+        },
+    }
+    answer = Answer(
+        status="answered",
+        claims=[
+            Claim(
+                text=(
+                    "Employees should get into the industrial refrigerator "
+                    "upon warning of an imminent nuclear detonation."
+                ),
+                chunk_id="shelter",
+            ),
+            Claim(
+                text="The door should be propped slightly ajar for airflow.",
+                chunk_id="door",
+            ),
+        ],
+    )
+    text = render(answer, sources)
+    assert "industrial refrigerator" in text
+    assert "propped slightly ajar" in text
 
 
 def test_prompt_files_ship_with_the_package():

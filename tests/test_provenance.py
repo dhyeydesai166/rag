@@ -37,7 +37,7 @@ def test_provenance_records_prompts_models_and_the_build(monkeypatch):
     assert record["embed_digest"] == "digest"
     assert record["temperature"] == 0
     assert record["seed"] == 42
-    assert set(record["prompts"]) == {"lookup_v2", "compare_v2"}
+    assert set(record["prompts"]) == {"lookup_v4", "compare_v2"}
     assert record["ollama_version"] == "0.0.0"
 
 

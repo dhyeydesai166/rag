@@ -24,12 +24,12 @@ def test_pinned_models_and_chroma_paths():
     assert config.EVAL_PAUSE_SECONDS == 6.0
 
 
-def test_prompt_names_default_to_v2(monkeypatch):
+def test_prompt_names_default(monkeypatch):
     monkeypatch.delenv("LOOKUP_PROMPT", raising=False)
     monkeypatch.delenv("COMPARE_PROMPT", raising=False)
     importlib.reload(config)
     try:
-        assert config.LOOKUP_PROMPT == "lookup_v2"
+        assert config.LOOKUP_PROMPT == "lookup_v4"
         assert config.COMPARE_PROMPT == "compare_v2"
     finally:
         monkeypatch.undo()

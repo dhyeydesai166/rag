@@ -2,6 +2,7 @@
 
 import hashlib
 import html
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,42 @@ from rag.messages import NOT_IN_SOURCES_MESSAGE
 from rag.models import Answer
 
 PROMPTS = Path(__file__).parent / "prompts"
+
+# A later claim restating one rule. The hazmat answers share just over half
+# their content words ("top 10" / "hazmat suits"); the door-ajar exception
+# shares none with the shelter sentence, so it stays.
+REPEAT_WORD_OVERLAP = 0.5
+_CONTENT_STOP = frozenset(
+    "a an the of to for and or in on at by with from that this is are was be "
+    "been it its their they who when should must may will can into upon than "
+    "any no not".split()
+)
+
+
+def same_claim(left: str, right: str) -> bool:
+    """True when two sentences state the same rule.
+
+    Why: several passages often say one rule, and the model writes a sentence
+    for each. Display and the repeat check should drop the later copy.
+    """
+    left_words = _content_words(left)
+    right_words = _content_words(right)
+    if not left_words or not right_words:
+        return _content_words(left) == _content_words(right)
+    smaller, larger = (
+        (left_words, right_words)
+        if len(left_words) <= len(right_words)
+        else (right_words, left_words)
+    )
+    return len(smaller & larger) / len(smaller) >= REPEAT_WORD_OVERLAP
+
+
+def _content_words(text: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", text.lower())
+        if word not in _CONTENT_STOP
+    }
 
 
 def load_prompt(name: str) -> str:
@@ -129,10 +166,13 @@ def render(answer: Answer, sources: dict[str, dict]) -> str:
         if source is None:
             warn("generate", f"dropping claim with unknown chunk_id={claim.chunk_id}")
             continue
+        text = claim.text.strip()
+        if any(same_claim(text, earlier) for earlier in sentences):
+            continue
+        sentences.append(text)
         if claim.chunk_id not in seen:
             seen.add(claim.chunk_id)
             cited.append(source)
-        sentences.append(claim.text.strip())
     if not sentences:
         return NOT_IN_SOURCES_MESSAGE
     if answer.status == "conflicting":

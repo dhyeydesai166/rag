@@ -184,6 +184,20 @@ CASES = [
         ],
         "required_facts": [["top 10"], ["foosball"]],
         "stale_facts": [],
+        "no_repeated_claims": True,
+    },
+    {
+        "id": "refrigerator-shelter",
+        "question": "When should I go inside a refrigerator?",
+        "route": "lookup",
+        "expect_status": "answered",
+        "gold_chunks": [
+            "Preparedness Policy|2.0|4. Nuclear Apocalypse Protocol — "
+            "Updated > 4.1 Shelter Location"
+        ],
+        "required_facts": [["refrigerator"], ["nuclear", "detonation"]],
+        "stale_facts": [],
+        "cited_only_gold": True,
     },
     {
         "id": "ai-apocalypse",
