@@ -23,6 +23,7 @@ from rag.config import (
     GENERATE_MODEL_DIGESTS,
     OLLAMA_HOST,
     RERANK_TOP_N,
+    ROUTE_MIN_SIMILARITY,
 )
 from rag.filters import catalog_from_chunks, extract_filters, lookup_targets
 from rag.fusion import rrf_fuse
@@ -39,7 +40,7 @@ from rag.logutil import (
 from rag.manifest import IndexMissing
 from rag.model_pins import check_model_pin
 from rag.question import JunkQuestion, clean_question, junk_reason
-from rag.route import classify_route, embed_examples, route_scores
+from rag.route import choose_route, embed_examples, route_scores
 from rag.section_map import SECTION_RENAMES
 
 
@@ -200,11 +201,14 @@ def retrieve(question: str, embedder, database, reranker, examples=None) -> dict
         best_lookup, best_compare = route_scores(
             question_vector, lookup_vectors, compare_vectors
         )
-        kind = classify_route(question_vector, lookup_vectors, compare_vectors)
+        kind = choose_route(best_lookup, best_compare)
+        weak = ""
+        if max(best_lookup, best_compare) < ROUTE_MIN_SIMILARITY:
+            weak = " reason=weak match"
         log(
             "route",
             f"kind={kind} best_lookup={best_lookup:.3f} "
-            f"best_compare={best_compare:.3f}",
+            f"best_compare={best_compare:.3f}{weak}",
         )
     search_vector = embedder.embed([filters.search_text or cleaned], task="query")[0]
     policy = filters.policy

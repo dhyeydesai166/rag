@@ -8,7 +8,7 @@ has to win by a margin.
 import math
 import sys
 
-from rag.config import ROUTE_COMPARE_MARGIN
+from rag.config import ROUTE_COMPARE_MARGIN, ROUTE_MIN_SIMILARITY
 from rag.route_examples import COMPARE_EXAMPLES, LOOKUP_EXAMPLES
 
 _CACHE: dict[int, tuple[list[list[float]], list[list[float]]]] = {}
@@ -37,22 +37,40 @@ def embed_examples(embedder) -> tuple[list[list[float]], list[list[float]]]:
     return _CACHE[key]
 
 
+def choose_route(
+    best_lookup: float,
+    best_compare: float,
+    margin: float = ROUTE_COMPARE_MARGIN,
+    min_similarity: float = ROUTE_MIN_SIMILARITY,
+) -> str:
+    """'compare' only for a clear match that is clearly closer to compare.
+
+    Why the floor: a greeting or an off-topic question is far from every
+    example, and which weak match is slightly closer says nothing.
+    """
+    if max(best_lookup, best_compare) < min_similarity:
+        return "lookup"
+    if best_compare >= best_lookup + margin:
+        return "compare"
+    return "lookup"
+
+
 def classify_route(
     question_vector: list[float],
     lookup_vectors: list[list[float]],
     compare_vectors: list[list[float]],
     margin: float = ROUTE_COMPARE_MARGIN,
+    min_similarity: float = ROUTE_MIN_SIMILARITY,
 ) -> str:
     """'compare' only if the question is clearly closer to a compare example.
 
     Why lean to lookup: a lookup on the latest version is still a correct answer
     for an ambiguous question; a spurious comparison is confusing.
     """
-    best_lookup = max(cosine(question_vector, vector) for vector in lookup_vectors)
-    best_compare = max(cosine(question_vector, vector) for vector in compare_vectors)
-    if best_compare >= best_lookup + margin:
-        return "compare"
-    return "lookup"
+    best_lookup, best_compare = route_scores(
+        question_vector, lookup_vectors, compare_vectors
+    )
+    return choose_route(best_lookup, best_compare, margin, min_similarity)
 
 
 def route_scores(
@@ -82,6 +100,9 @@ def main(argv=None) -> int:
 
     embedder = EmbeddingAdapter()
     lookup_vectors, compare_vectors = embed_examples(embedder)
+    lowest_score = None
+    lowest_id = ""
+    problems = 0
     for case in CASES:
         cleaned = clean_question(case["question"])
         vector = embedder.embed([cleaned], task="similarity")[0]
@@ -90,12 +111,22 @@ def main(argv=None) -> int:
         )
         chosen = classify_route(vector, lookup_vectors, compare_vectors)
         expected = case.get("route", "")
+        best = max(best_lookup, best_compare)
+        if lowest_score is None or best < lowest_score:
+            lowest_score = best
+            lowest_id = case["id"]
+        if chosen != expected or best < ROUTE_MIN_SIMILARITY:
+            problems += 1
         print(
             f"chosen={chosen} expected={expected} "
             f"best_lookup={best_lookup:.3f} best_compare={best_compare:.3f} "
             f"question={case['question']}"
         )
-    return 0
+    print(
+        f"lowest best similarity: {lowest_score:.3f} ({lowest_id}); "
+        f"ROUTE_MIN_SIMILARITY={ROUTE_MIN_SIMILARITY:.2f}"
+    )
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

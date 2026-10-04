@@ -4,6 +4,7 @@ No model is involved: the rules are short and the messages are fixed.
 """
 
 import re
+import string
 
 from rag.config import FILLER_WORDS, KEYMASH_CONSONANT_RUN, MAX_QUESTION_CHARS
 from rag.messages import (
@@ -62,7 +63,8 @@ def _has_no_letters(question: str) -> str | None:
 
 
 def _is_filler(question: str) -> str | None:
-    if question.lower() in FILLER_WORDS:
+    """A lone greeting or test word, ignoring punctuation around it ('Hi!', 'ok.')."""
+    if question.strip(string.punctuation + " ").lower() in FILLER_WORDS:
         return FILLER_GREETING
     return None
 

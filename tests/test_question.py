@@ -32,9 +32,15 @@ def test_symbols_and_numbers_only_are_rejected():
     assert junk_reason("12345")
 
 
-@pytest.mark.parametrize("word", ["hi", "OK", "test"])
+@pytest.mark.parametrize(
+    "word", ["hi", "OK", "test", "Hi!", "hello?", "ok.", "Test?", "  Thanks!!  "]
+)
 def test_single_filler_word_is_rejected(word):
     assert "Ask me about" in junk_reason(clean_question(word))
+
+
+def test_a_greeting_followed_by_a_question_is_kept():
+    assert junk_reason(clean_question("Hi, what does the dress code prohibit?")) is None
 
 
 @pytest.mark.parametrize("text", ["asdfghjkl", "qwrtzp", "aaaaaaa"])

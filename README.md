@@ -117,7 +117,8 @@ All of these live in `src/rag/config.py`.
 | `MAX_QUESTION_CHARS` | 500 | Real questions are short. Longer input is usually pasted text. |
 | `FILLER_WORDS`, `KEYMASH_CONSONANT_RUN` | see file | Friendly rejection of non-questions. |
 | `POLICY_ALIASES`, `VERSION_PATTERN` | see file | Code-based filters. Only unambiguous aliases. |
-| `ROUTE_COMPARE_MARGIN` | 0.02 | Compare only when clearly closer to the compare examples. Not calibrated against a live server in this checkout; run `python -m rag.route report`. |
+| `ROUTE_COMPARE_MARGIN` | 0.02 | Compare only when clearly closer to the compare examples. `python -m rag.route report` routes every eval question correctly at this margin. |
+| `ROUTE_MIN_SIMILARITY` | 0.50 | Below this, a question is not clearly either route; lookup is the safe default. Measured against the eval set. |
 | `DENSE_TOP_K`, `LEXICAL_TOP_K` | 20, 20 | Candidates per retriever. |
 | `BM25_K1`, `BM25_B` | 1.5, 0.75 | Standard BM25 defaults. |
 | `RRF_K` | 60 | Standard RRF constant. No single retriever dominates. |
@@ -145,7 +146,7 @@ All of these live in `src/rag/config.py`.
 
 - Token counts are estimated. `truncate=False` makes an overflow an error instead of silent loss.
 - Policy aliases and the renamed-section map are hand-maintained. A new document may need a new entry.
-- The route classifier depends on example questions and a margin. Unusual phrasing can misroute. `python -m rag.trace` logs both similarities. The margin has not been calibrated here.
+- The route classifier depends on example questions, a margin, and a similarity floor. Unusual phrasing can misroute. `python -m rag.trace` logs both similarities. An off-topic question that uses change words ("What changed in the weather today?") can still score above the floor and route to compare; the answer should then be that the documents do not cover it.
 - Chroma has no multi-statement transactions. Incremental updates are crash-safe by write ordering. A query during an incremental run may briefly see a partially updated file. A full rebuild writes a new collection, checks it, then switches the manifest. A failed rebuild leaves the old index untouched. A query that starts just before the switch may fail once when the old collection is dropped; run it again.
 - Answer checks are string and number checks. They catch wrong numbers, stale facts, unsupported change claims, and missing facts. They do not catch every paraphrase error. Word numbers ("three") are covered by required facts, not by the number rule.
 - Cohere may change the model behind `rerank-v3.5`.

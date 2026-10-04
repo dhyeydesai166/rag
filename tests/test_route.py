@@ -1,6 +1,6 @@
 import pytest
 
-from rag.route import classify_route, cosine
+from rag.route import choose_route, classify_route, cosine
 
 
 def test_cosine_handles_empty_and_mismatched_vectors():
@@ -20,6 +20,22 @@ def test_question_near_a_lookup_example_is_lookup():
 
 def test_tie_goes_to_lookup():
     assert classify_route([1.0, 1.0], [[1.0, 0.0]], [[0.0, 1.0]]) == "lookup"
+
+
+def test_weak_match_goes_to_lookup_even_when_compare_is_closer():
+    assert choose_route(0.392, 0.416) == "lookup"
+
+
+def test_clear_compare_above_the_floor_is_compare():
+    assert choose_route(0.581, 0.690) == "compare"
+
+
+def test_the_floor_is_inclusive():
+    assert choose_route(0.30, 0.50, min_similarity=0.50) == "compare"
+
+
+def test_near_tie_above_the_floor_is_lookup():
+    assert choose_route(0.600, 0.610) == "lookup"
 
 
 def test_margin_is_respected():
@@ -66,3 +82,26 @@ def test_every_eval_question_gets_its_expected_route():
         if chosen != case["route"]:
             misses.append(case["question"])
     assert misses == []
+
+
+@pytest.mark.ollama
+def test_every_eval_question_clears_the_route_floor():
+    from adapter.embedding_adapter import EmbeddingAdapter
+    from evals.cases import CASES
+    from rag.config import ROUTE_MIN_SIMILARITY
+    from rag.question import clean_question
+    from rag.route import embed_examples, route_scores
+
+    embedder = EmbeddingAdapter()
+    lookup_vectors, compare_vectors = embed_examples(embedder)
+    below = []
+    for case in CASES:
+        vector = embedder.embed([clean_question(case["question"])], task="similarity")[
+            0
+        ]
+        best_lookup, best_compare = route_scores(
+            vector, lookup_vectors, compare_vectors
+        )
+        if max(best_lookup, best_compare) < ROUTE_MIN_SIMILARITY:
+            below.append(case["id"])
+    assert below == []

@@ -77,9 +77,15 @@ POLICY_ALIASES = {
 VERSION_PATTERN = r"\b\d+\.\d+(?:\.\d+)*\b"
 
 # Compare must beat lookup by this cosine margin. Similarities are only
-# compared within one question. 0.02 is the starting value; calibrate with
-# `python -m rag.route report` when Ollama is available and record the value.
+# compared within one question. `python -m rag.route report` routes every eval
+# question correctly with 0.02.
 ROUTE_COMPARE_MARGIN = 0.02
+# A question whose best cosine similarity to every example question is below this
+# is not clearly a lookup or a compare, so it takes the safe route (lookup).
+# Measured with embeddinggemma:300m: all 21 eval questions score >= 0.564;
+# off-topic inputs that routed to compare scored 0.416-0.483. 0.50 sits between.
+# Re-check with `python -m rag.route report` after changing examples or the model.
+ROUTE_MIN_SIMILARITY = 0.50
 
 # Standard Okapi BM25 defaults; the corpus is too small to tune them.
 BM25_K1 = 1.5
