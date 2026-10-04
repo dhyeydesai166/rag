@@ -46,20 +46,24 @@ from rag.section_map import SECTION_RENAMES
 def rerank_with_fallback(question, items, texts, reranker, keep: int = RERANK_TOP_N):
     """Reorder the fused shortlist with Cohere; on any failure keep the fused order.
 
-    Why: the reranker improves precision but is an external service; an
-    outage or a missing key must cost quality, not availability.
+    Returns (items, used_reranker). Why the flag: the retrieval eval treats
+    the final top 3 as a gate only when Cohere actually ranked them.
+
+    Why the fallback: the reranker improves precision but is an external
+    service; an outage or a missing key must cost quality, not availability.
     """
     if not items:
-        return []
+        return [], False
     if reranker is None:
         warn("rerank", "no COHERE_API_KEY; using fused order")
-        return items[:keep]
+        return items[:keep], False
     try:
         order = reranker.rank(question, texts, top_n=keep)
     except RerankUnavailable as error:
         warn("rerank", f"Cohere unavailable ({error}); using fused order")
-        return items[:keep]
-    return [items[index] for index in order if 0 <= index < len(items)][:keep]
+        return items[:keep], False
+    kept = [items[index] for index in order if 0 <= index < len(items)][:keep]
+    return kept, True
 
 
 def _search(search_text, vector, chunks, where, database):
@@ -99,7 +103,8 @@ def _lookup(filters, catalog, search_vector, database, question, reranker):
     by_id = {chunk["id"]: chunk for chunk in chunks}
     items = [by_id[hit.chunk_id] for hit in fused if hit.chunk_id in by_id]
     texts = [item.get("embed_text") or item["text"] for item in items]
-    return rerank_with_fallback(question, items, texts, reranker)
+    hits, used = rerank_with_fallback(question, items, texts, reranker)
+    return hits, [item["id"] for item in items], used
 
 
 def _compare(filters, policy, catalog, search_vector, database, question, reranker):
@@ -145,7 +150,14 @@ def _compare(filters, policy, catalog, search_vector, database, question, rerank
     scored.sort(key=lambda item: (-item[0]["score"], item[1], item[0]["title"]))
     shortlist = [pair for pair, _rank in scored[:FUSED_TOP_K]]
     texts = [pair_text(pair) for pair in shortlist]
-    return rerank_with_fallback(question, shortlist, texts, reranker)
+    hits, used = rerank_with_fallback(question, shortlist, texts, reranker)
+    fused_ids = []
+    for pair in shortlist:
+        for side_name in ("previous", "current"):
+            side = pair.get(side_name)
+            if side:
+                fused_ids.append(side["id"])
+    return hits, fused_ids, used
 
 
 def retrieve(question: str, embedder, database, reranker, examples=None) -> dict:
@@ -190,7 +202,7 @@ def retrieve(question: str, embedder, database, reranker, examples=None) -> dict
             else:
                 log("route", f"kind=compare policy={policy} reason=top dense hit")
     if kind == "compare" and policy:
-        hits = _compare(
+        hits, fused_ids, reranked = _compare(
             filters, policy, catalog, search_vector, database, cleaned, reranker
         )
         route = {
@@ -199,7 +211,9 @@ def retrieve(question: str, embedder, database, reranker, examples=None) -> dict
             "versions": compare_versions(filters, catalog[policy]),
         }
     else:
-        hits = _lookup(filters, catalog, search_vector, database, cleaned, reranker)
+        hits, fused_ids, reranked = _lookup(
+            filters, catalog, search_vector, database, cleaned, reranker
+        )
         route = {"kind": "lookup", "targets": lookup_targets(filters, catalog)}
         kind = "lookup"
     log(
@@ -207,7 +221,14 @@ def retrieve(question: str, embedder, database, reranker, examples=None) -> dict
         f"policy={filters.policy} versions={','.join(filters.versions) or '-'} "
         f"kind={kind} search={filters.search_text!r} hits={len(hits)}",
     )
-    return {"kind": kind, "route": route, "hits": hits, "filters": filters}
+    return {
+        "kind": kind,
+        "route": route,
+        "hits": hits,
+        "filters": filters,
+        "fused_ids": fused_ids,
+        "reranked": reranked,
+    }
 
 
 def _check_models() -> None:

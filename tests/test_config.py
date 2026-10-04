@@ -18,3 +18,6 @@ def test_pinned_models_and_chroma_paths():
     assert config.RRF_K == 60
     assert config.FUSED_TOP_K == 20
     assert config.RERANK_TOP_N == 3
+    assert config.ANSWER_EVAL_RUNS == 3
+    assert config.GENERATION_TEMPERATURE == 0
+    assert config.GENERATION_SEED == 42

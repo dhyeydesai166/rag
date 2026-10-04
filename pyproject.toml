@@ -34,7 +34,7 @@ rag = ["prompts/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
 addopts = "--cov=rag --cov=adapter --cov-report=term-missing -m 'not ollama'"
 markers = ["ollama: needs a running local Ollama daemon"]
 

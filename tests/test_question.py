@@ -1,11 +1,7 @@
 import pytest
 
+from evals.cases import CASES
 from rag.question import clean_question, junk_reason
-
-try:
-    from eval_set import CASES
-except ImportError:
-    from tests.eval_set import CASES
 
 
 def test_whitespace_and_curly_quotes_are_normalized():

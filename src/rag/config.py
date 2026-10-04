@@ -107,6 +107,9 @@ COMPARE_PROMPT = "compare_v1"
 # answer, so eval runs are comparable and regressions are visible.
 GENERATION_TEMPERATURE = 0
 GENERATION_SEED = 42
+# Temperature 0 should make runs identical; three runs reveal nondeterminism
+# from hardware or server versions at modest cost.
+ANSWER_EVAL_RUNS = 3
 
 # A rerank call normally returns in well under a second; 10s means something is wrong.
 RERANK_TIMEOUT_SECONDS = 10

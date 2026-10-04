@@ -77,12 +77,7 @@ def main(argv=None) -> int:
 
     root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(root))
-    try:
-        from evals.cases import CASES
-    except ImportError:
-        sys.path.insert(0, str(root / "tests"))
-        from eval_set import CASES
-
+    from evals.cases import CASES
     from rag.question import clean_question
 
     embedder = EmbeddingAdapter()

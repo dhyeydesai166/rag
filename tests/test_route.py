@@ -49,15 +49,12 @@ def test_compare_on_single_version_policy_falls_back_to_lookup(tmp_path, rag_log
 
 @pytest.mark.ollama
 def test_every_eval_question_gets_its_expected_route():
-    from eval_set import CASES
-
     from adapter.embedding_adapter import EmbeddingAdapter
+    from evals.cases import CASES
     from rag.question import clean_question
     from rag.route import embed_examples
 
     labeled = [case for case in CASES if case.get("route")]
-    if not labeled:
-        pytest.skip("eval cases do not label an expected route yet")
     embedder = EmbeddingAdapter()
     lookup_vectors, compare_vectors = embed_examples(embedder)
     misses = []
