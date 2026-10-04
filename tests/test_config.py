@@ -29,7 +29,7 @@ def test_prompt_names_default(monkeypatch):
     monkeypatch.delenv("COMPARE_PROMPT", raising=False)
     importlib.reload(config)
     try:
-        assert config.LOOKUP_PROMPT == "lookup_v4"
+        assert config.LOOKUP_PROMPT == "lookup_v5"
         assert config.COMPARE_PROMPT == "compare_v2"
     finally:
         monkeypatch.undo()

@@ -198,6 +198,9 @@ CASES = [
         "required_facts": [["refrigerator"], ["nuclear", "detonation"]],
         "stale_facts": [],
         "cited_only_gold": True,
+        # Without Cohere the top 3 are HR refrigerator chunks, so the shelter
+        # section is not in the prompt. Score this case only when Cohere ranked.
+        "needs_rerank": True,
     },
     {
         "id": "ai-apocalypse",

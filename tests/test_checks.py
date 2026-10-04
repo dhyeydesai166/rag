@@ -387,6 +387,47 @@ def test_repeated_claim_is_a_miss_when_the_case_forbids_it():
     assert any(item.startswith("repeated claim") for item in result.misses)
 
 
+def test_a_removed_line_satisfies_the_removed_fact():
+    case = _case(
+        gold_chunks=["gold"],
+        required_facts=[["removed", "no longer", "dropped", "not included"]],
+        stale_facts=[],
+    )
+    answer = _answer("The winner kept the table.")
+    retrieved = {"gold": {"text": "winner keeps the table", "version": "1.0"}}
+    without = check_answer(answer, retrieved, "compare", case)
+    assert any(item.startswith("missing fact") for item in without.misses)
+    with_line = check_answer(
+        answer,
+        retrieved,
+        "compare",
+        case,
+        display_lines=["Removed in version 2.0: Dispute Resolution"],
+    )
+    assert not any(item.startswith("missing fact") for item in with_line.misses)
+
+
+def test_refrigerator_case_is_not_scored_without_rerank():
+    case = _case(
+        gold_chunks=["shelter"],
+        required_facts=[["refrigerator"], ["nuclear", "detonation"]],
+        stale_facts=[],
+        cited_only_gold=True,
+        needs_rerank=True,
+    )
+    answer = Answer(
+        status="answered",
+        claims=[Claim(text="Food belongs to nobody.", chunk_id="hr")],
+    )
+    retrieved = {"hr": {"text": "Food belongs to nobody.", "version": "2.0"}}
+    skipped = check_answer(answer, retrieved, "lookup", case, reranked=False)
+    assert skipped.misses == []
+    scored = check_answer(answer, retrieved, "lookup", case, reranked=True)
+    assert "no gold chunk cited" in scored.misses
+    assert any(item.startswith("missing fact") for item in scored.misses)
+    assert "cited a chunk outside gold: hr" in scored.misses
+
+
 def test_a_citation_outside_gold_is_a_miss_when_required():
     result = check_answer(
         Answer(

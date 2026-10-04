@@ -13,8 +13,10 @@ from rag.generate import (
     answer_schema,
     generate,
     load_prompt,
+    missing_side_lines,
     prompt_sha256,
     render,
+    same_claim,
     source_tag,
 )
 from rag.messages import NOT_IN_SOURCES_MESSAGE
@@ -376,6 +378,142 @@ def test_an_exception_to_the_same_rule_stays_in_the_paragraph():
     text = render(answer, sources)
     assert "industrial refrigerator" in text
     assert "propped slightly ajar" in text
+
+
+def _usage_sources(*ids):
+    return {
+        chunk_id: {
+            "policy": "Time & Usage Policy",
+            "version": "2.0",
+            "heading_path": chunk_id,
+        }
+        for chunk_id in ids
+    }
+
+
+def test_different_amounts_are_both_printed():
+    answer = Answer(
+        status="answered",
+        claims=[
+            Claim(text="Version 1.0 allocated 1,000,000 tokens.", chunk_id="old"),
+            Claim(text="Version 2.0 allocated 500,000 tokens.", chunk_id="new"),
+        ],
+    )
+    text = render(answer, _usage_sources("old", "new"))
+    assert "1,000,000" in text
+    assert "500,000" in text
+    assert not same_claim(
+        "Version 1.0 allocated 1,000,000 tokens.",
+        "Version 2.0 allocated 500,000 tokens.",
+    )
+
+
+def test_a_conflict_keeps_both_sides():
+    answer = Answer(
+        status="conflicting",
+        claims=[
+            Claim(text="Video game time is 45 minutes per workday.", chunk_id="a"),
+            Claim(text="Video game time is 60 minutes per workday.", chunk_id="b"),
+        ],
+    )
+    text = render(answer, _usage_sources("a", "b"))
+    assert text.startswith("The sources disagree.")
+    assert "45 minutes" in text
+    assert "60 minutes" in text
+
+
+def test_different_rules_with_different_numbers_both_print():
+    answer = Answer(
+        status="answered",
+        claims=[
+            Claim(text="Video game time is 45 minutes per workday.", chunk_id="games"),
+            Claim(text="Foosball time is 30 minutes per workday.", chunk_id="foosball"),
+        ],
+    )
+    text = render(answer, _usage_sources("games", "foosball"))
+    assert "45 minutes" in text
+    assert "30 minutes" in text
+
+
+def test_a_comparison_is_not_deduped():
+    answer = Answer(
+        status="answered",
+        claims=[
+            Claim(text="The limit is 45 minutes in the older version.", chunk_id="old"),
+            Claim(text="The limit is 45 minutes in the newer version.", chunk_id="new"),
+        ],
+    )
+    text = render(answer, _usage_sources("old", "new"), kind="compare")
+    assert "older version" in text
+    assert "newer version" in text
+
+
+def test_a_removed_section_is_named_in_the_printed_answer():
+    route = {
+        "kind": "compare",
+        "policy": "Time & Usage Policy",
+        "versions": ("1.0", "2.0"),
+    }
+    hits = [
+        {
+            "policy": "Time & Usage Policy",
+            "title": "foosball time > dispute resolution",
+            "heading_path": "4. Foosball Time > 4.2 Dispute Resolution",
+            "previous": {
+                "id": "old",
+                "version": "1.0",
+                "heading_path": "4. Foosball Time > 4.2 Dispute Resolution",
+                "text": "winner keeps the table",
+            },
+            "current": None,
+        }
+    ]
+    model = RecordingModel(
+        json.dumps(
+            {
+                "status": "answered",
+                "claims": [{"text": "The winner kept the table.", "chunk_id": "old"}],
+            }
+        )
+    )
+    result = generate(
+        "what happened to the dispute rule?",
+        {"kind": "compare", "route": route, "hits": hits},
+        model,
+    )
+    assert missing_side_lines(route, hits) == [
+        "Removed in version 2.0: Dispute Resolution"
+    ]
+    assert "Removed in version 2.0: Dispute Resolution" in result.text
+
+
+def test_an_added_section_is_named_in_the_printed_answer():
+    route = {
+        "kind": "compare",
+        "policy": "HR Policy",
+        "versions": ("1.0", "2.0"),
+    }
+    hits = [
+        {
+            "policy": "HR Policy",
+            "heading_path": "8. Skincare Stations",
+            "previous": None,
+            "current": {
+                "id": "new",
+                "version": "2.0",
+                "heading_path": "8. Skincare Stations",
+                "text": "stations were installed",
+            },
+        }
+    ]
+    assert missing_side_lines(route, hits) == [
+        "Added in version 2.0: Skincare Stations"
+    ]
+
+
+def test_lookup_prompt_states_a_base_amount():
+    text = load_prompt(LOOKUP_PROMPT)
+    assert "When a rule extends a base amount, state the base too." in text
 
 
 def test_prompt_files_ship_with_the_package():

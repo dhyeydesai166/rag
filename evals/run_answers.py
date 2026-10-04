@@ -17,7 +17,7 @@ from evals.cases import CASES
 from evals.checks import check_answer, counterparts_by_id, passages_by_id
 from evals.pacing import pause_between_questions
 from rag.config import ANSWER_EVAL_RUNS, OLLAMA_HOST
-from rag.generate import generate
+from rag.generate import generate, missing_side_lines
 from rag.manifest import load_manifest
 from rag.provenance import provenance
 from rag.retrieve import _check_models, retrieve
@@ -31,12 +31,17 @@ def score_case(case: dict, found: dict, model) -> dict:
     started = time.perf_counter()
     generated = generate(case["question"], found, model)
     answer = generated.answer
+    lines = []
+    if answer.status != "not_in_sources":
+        lines = missing_side_lines(found.get("route") or {}, found["hits"])
     checked = check_answer(
         answer,
         passages_by_id(found["kind"], found["hits"]),
         found["kind"],
         case,
         counterparts_by_id(found["kind"], found["hits"]),
+        display_lines=lines,
+        reranked=bool(found.get("reranked")),
     )
     return {
         "id": case["id"],

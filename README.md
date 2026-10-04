@@ -8,7 +8,7 @@ A question-answering tool over the policy documents in `docs/`: HR, Health & Wel
 
 **Retrieval.** Clean the question in code, reject junk, and extract policy and version filters in code. Decide lookup versus compare by comparing the question's embedding to a few example questions. Then run dense search (Chroma) and BM25 on the same filtered chunks, fuse the ranks with reciprocal rank fusion (k=60), and rerank the shortlist with Cohere. If Cohere is missing or fails, the fused order is used and a warning is logged. A comparison runs that search once per version and pairs sections by normalized title.
 
-**Generation.** Pick the lookup or compare prompt file, wrap passages in `<source>` tags, pass the original question and the route the code chose, and ask Ollama for JSON (`status` plus claims, each with a `chunk_id`). The printed answer is those claims as plain sentences, a blank line, then the sources.
+**Generation.** Pick the lookup or compare prompt file, wrap passages in `<source>` tags, pass the original question and the route the code chose, and ask Ollama for JSON (`status` plus claims, each with a `chunk_id`). The printed answer is those claims as plain sentences, a blank line, then the sources. A later lookup sentence is dropped only when it restates an earlier one and uses the same numbers. Comparisons and conflicts keep every sentence. A comparison pair with one side missing adds a line such as "Removed in version 2.0: Dispute Resolution"; the answer check counts that line.
 
 ```mermaid
 flowchart LR
@@ -36,10 +36,10 @@ flowchart LR
         R4 --> R5
     end
     subgraph Generation
-        R5 --> G1[prompts: lookup_v1 or compare_v1]
+        R5 --> G1[prompts: lookup_v5 or compare_v2]
         G1 --> G2[source tags + original question + route]
         G2 --> G3[Ollama format=JSON schema<br/>temperature 0, seed]
-        G3 --> G4[render claims with sources<br/>or not-in-sources message]
+        G3 --> G4[plain sentences, then sources<br/>dedupe restated lookup sentences]
     end
     I -.-> R1
     I -.-> R2
@@ -89,7 +89,7 @@ python -m evals.run_answers --runs 3
 
 `pytest` does not need Ollama or Cohere. The two eval commands do need Ollama and the pinned models. They write `results/retrieval_eval.json` and `results/answer_eval.json` (gitignored) with provenance: git sha, date, model digests, prompt names and hashes, and the index build id. CI runs the answer eval once on push and PR, and three times on a manual run; results are uploaded as an artifact with provenance.
 
-The retrieval command exits 1 if a case takes the wrong route or its gold chunks are missing from the fused shortlist. The final top 3 is a gate only when Cohere actually ranked. The answer command prints, per run:
+The retrieval command exits 1 if a case takes the wrong route or its gold chunks are missing from the fused shortlist. The final top 3 is a gate only when Cohere actually ranked. `refrigerator-shelter` is scored only when Cohere ranked: without a key its top 3 are HR refrigerator chunks, not the preparedness shelter section. The answer command prints, per run:
 
 ```
 run  misses  inventions  clean_cases  route_ok
@@ -126,11 +126,11 @@ All of these live in `src/rag/config.py`.
 | `RERANK_MODEL`, `RERANK_TOP_N` | `rerank-v3.5`, 3 | Final passages for the answer model. |
 | `RERANK_TIMEOUT_SECONDS`, `RERANK_RETRIES`, `RERANK_RETRY_DELAY_SECONDS` | 10, 1, 1.0 | Bounded wait, one retry, then fallback. |
 | `EVAL_PAUSE_SECONDS` | 6 | Cohere trial keys allow 10 rerank calls/minute; only applied with a key. |
-| `LOOKUP_PROMPT`, `COMPARE_PROMPT` | `lookup_v4`, `compare_v2` | Versioned prompt files. Override with the env variables for a trial. |
+| `LOOKUP_PROMPT`, `COMPARE_PROMPT` | `lookup_v5`, `compare_v2` | Versioned prompt files. Override with the env variables for a trial. |
 | `GENERATION_TEMPERATURE`, `GENERATION_SEED` | 0, 42 | Repeatable answers. |
 | `ANSWER_EVAL_RUNS` | 3 | Reveals nondeterminism at modest cost. |
 
-`lookup_v4` is the active lookup prompt. On three runs with `gemma3:12b` and `compare_v2`, it had 2 misses and 0 inventions; `lookup_v2` had 3 and 0. `lookup_v3`, `compare_v3`, and `compare_v4` were tried earlier and did not beat `lookup_v2` and `compare_v2`. Those files stay in `src/rag/prompts/`.
+`lookup_v5` and `compare_v2` are the active prompts. `lookup_v5` is `lookup_v4` plus "When a rule extends a base amount, state the base too." On three runs with `gemma3:12b` and `compare_v2`, `lookup_v4` had 2 misses and 0 inventions; `lookup_v2` had 3 and 0. `lookup_v3`, `compare_v3`, and `compare_v4` were tried earlier and did not beat `lookup_v2` and `compare_v2`. Those files stay in `src/rag/prompts/`.
 
 ## Design decisions
 
@@ -152,4 +152,5 @@ All of these live in `src/rag/config.py`.
 - Chroma has no multi-statement transactions. Incremental updates are crash-safe by write ordering. A query during an incremental run may briefly see a partially updated file. A full rebuild writes a new collection, checks it, then switches the manifest. A failed rebuild leaves the old index untouched. A query that starts just before the switch may fail once when the old collection is dropped; run it again.
 - Answer checks are string and number checks. They catch wrong numbers, stale facts, unsupported change claims, and missing facts. They do not catch every paraphrase error. Word numbers ("three") are covered by required facts, not by the number rule.
 - Cohere may change the model behind `rerank-v3.5`.
+- Without Cohere, "When should I go inside a refrigerator?" retrieves HR refrigerator chunks, not the preparedness shelter section. `refrigerator-shelter` is not scored on those runs.
 - `validate.py` still validates each record twice. That second attempt stays until compliance clears removing it.

@@ -1,6 +1,6 @@
 # Prompt trials
 
-Active: `lookup_v4`, `compare_v2` (`src/rag/config.py`). A trial prompt stays in this
+Active: `lookup_v5`, `compare_v2` (`src/rag/config.py`). A trial prompt stays in this
 folder after it loses, so its scores can be reproduced: eval provenance records each
 prompt's name and sha256. Never edit a prompt file in place; add a new suffix.
 
@@ -50,4 +50,12 @@ each, git sha `7cf3959-dirty`, `compare_v2` held fixed:
 All 22 questions took the expected route on every run. `lookup_v4` stopped treating the
 foosball limit as a conflict with video-game time, and it stopped repeating the hazmat
 rule. It drops the 5-day pet-leave base when the question asks about adopting a dog.
-`foosball-dispute-compare` still misses “removed”; that case uses `compare_v2`.
+In that comparison, `foosball-dispute-compare` missed “removed” because the model did not
+say it. The printed answer now adds that line from the missing pair, and the check
+counts the line.
+
+## lookup_v5
+
+`lookup_v5` is the active lookup prompt. It is `lookup_v4` plus one sentence: "When a
+rule extends a base amount, state the base too." That is the 5-day pet-leave base
+`lookup_v4` dropped on `dog-adoption`. It has not been scored in a three-run eval yet.

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from rag.compare import SECTION_NUMBER
 from rag.config import COMPARE_PROMPT, LOOKUP_PROMPT
 from rag.logutil import log, stage, warn
 from rag.messages import NOT_IN_SOURCES_MESSAGE
@@ -26,12 +27,23 @@ _CONTENT_STOP = frozenset(
 )
 
 
+def _numbers(text: str) -> frozenset[str]:
+    """Digit groups with thousands separators removed: '1,000,000' -> '1000000'."""
+    return frozenset(
+        match.replace(",", "") for match in re.findall(r"\d[\d,]*(?:\.\d+)?", text)
+    )
+
+
 def same_claim(left: str, right: str) -> bool:
     """True when two sentences state the same rule.
 
     Why: several passages often say one rule, and the model writes a sentence
-    for each. Display and the repeat check should drop the later copy.
+    for each. Different numbers are different facts, so '1,000,000 tokens' and
+    '500,000 tokens' are not the same claim. Display of a comparison or a
+    conflict does not use this.
     """
+    if _numbers(left) != _numbers(right):
+        return False
     left_words = _content_words(left)
     right_words = _content_words(right)
     if not left_words or not right_words:
@@ -154,10 +166,50 @@ def parse_answer(raw: str) -> Answer:
         return Answer(status="not_in_sources", claims=[])
 
 
-def render(answer: Answer, sources: dict[str, dict]) -> str:
-    """Plain sentences, a blank line, then only the sources those sentences cite."""
+def section_label(heading_path: str) -> str:
+    """'4. Foosball Time > 4.2 Dispute Resolution' -> 'Dispute Resolution'."""
+    leaf = heading_path.split(" > ")[-1]
+    return SECTION_NUMBER.sub("", leaf).strip()
+
+
+def missing_side_lines(route: dict, hits: list[dict]) -> list[str]:
+    """Name every compared section that exists in only one version.
+
+    Why: title pairing already knows a section was removed or added. The
+    printed answer should say so without depending on the model's wording.
+    """
+    if route.get("kind") != "compare":
+        return []
+    versions = route.get("versions") or ()
+    if len(versions) != 2:
+        return []
+    new = versions[1]
+    lines = []
+    for pair in hits:
+        label = section_label(pair.get("heading_path") or "")
+        if not label:
+            continue
+        if pair.get("previous") and not pair.get("current"):
+            lines.append(f"Removed in version {new}: {label}")
+        elif pair.get("current") and not pair.get("previous"):
+            lines.append(f"Added in version {new}: {label}")
+    return lines
+
+
+def render(
+    answer: Answer,
+    sources: dict[str, dict],
+    kind: str | None = None,
+    notes: list[str] | None = None,
+) -> str:
+    """Plain sentences, a blank line, then only the sources those sentences cite.
+
+    A later lookup sentence is dropped only when it restates an earlier one
+    and uses the same numbers. Comparisons and conflicts keep every sentence.
+    """
     if answer.status == "not_in_sources":
         return NOT_IN_SOURCES_MESSAGE
+    skip_dedupe = kind == "compare" or answer.status == "conflicting"
     cited: list[dict] = []
     seen: set[str] = set()
     sentences = []
@@ -167,12 +219,15 @@ def render(answer: Answer, sources: dict[str, dict]) -> str:
             warn("generate", f"dropping claim with unknown chunk_id={claim.chunk_id}")
             continue
         text = claim.text.strip()
-        if any(same_claim(text, earlier) for earlier in sentences):
+        if not skip_dedupe and any(same_claim(text, earlier) for earlier in sentences):
             continue
         sentences.append(text)
         if claim.chunk_id not in seen:
             seen.add(claim.chunk_id)
             cited.append(source)
+    for note in notes or []:
+        if note not in sentences:
+            sentences.append(note)
     if not sentences:
         return NOT_IN_SOURCES_MESSAGE
     if answer.status == "conflicting":
@@ -208,4 +263,6 @@ def generate(question: str, result: dict, model) -> GeneratedAnswer:
         raw = model.generate(user, system=load_prompt(prompt_name), schema=schema)
     answer = parse_answer(raw)
     log("generate", f"kind={route.get('kind')} hits={len(hits)} status={answer.status}")
-    return GeneratedAnswer(answer, render(answer, sources), prompt_name)
+    notes = missing_side_lines(route, hits)
+    text = render(answer, sources, kind=route.get("kind"), notes=notes)
+    return GeneratedAnswer(answer, text, prompt_name)
