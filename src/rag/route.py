@@ -7,11 +7,17 @@ has to win by a margin.
 
 import math
 import sys
+import weakref
 
 from rag.config import ROUTE_COMPARE_MARGIN, ROUTE_MIN_SIMILARITY
 from rag.route_examples import COMPARE_EXAMPLES, LOOKUP_EXAMPLES
 
-_CACHE: dict[int, tuple[list[list[float]], list[list[float]]]] = {}
+# Keyed by the embedder object, not its id. CPython reuses ids after the
+# object is freed, and a stale entry would route the next embedder with the
+# previous one's vectors.
+_CACHE: weakref.WeakKeyDictionary[
+    object, tuple[list[list[float]], list[list[float]]]
+] = weakref.WeakKeyDictionary()
 
 
 def cosine(left: list[float], right: list[float]) -> float:
@@ -26,15 +32,14 @@ def cosine(left: list[float], right: list[float]) -> float:
 
 
 def embed_examples(embedder) -> tuple[list[list[float]], list[list[float]]]:
-    """Embed both example lists once per process with the 'similarity' task."""
-    key = id(embedder)
-    cached = _CACHE.get(key)
+    """Embed both example lists once per embedder with the 'similarity' task."""
+    cached = _CACHE.get(embedder)
     if cached is not None:
         return cached
     lookup = embedder.embed(list(LOOKUP_EXAMPLES), task="similarity")
     compare = embedder.embed(list(COMPARE_EXAMPLES), task="similarity")
-    _CACHE[key] = (lookup, compare)
-    return _CACHE[key]
+    _CACHE[embedder] = (lookup, compare)
+    return _CACHE[embedder]
 
 
 def choose_route(

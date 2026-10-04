@@ -38,6 +38,33 @@ def test_near_tie_above_the_floor_is_lookup():
     assert choose_route(0.600, 0.610) == "lookup"
 
 
+def test_a_new_embedder_does_not_reuse_a_freed_embedders_examples():
+    import gc
+
+    from rag.route import embed_examples
+
+    class Counter:
+        def __init__(self, marker: float) -> None:
+            self.marker = marker
+            self.calls = 0
+
+        def embed(self, texts, task):
+            self.calls += 1
+            return [[float(self.marker)] for _ in texts]
+
+    first = Counter(1)
+    embed_examples(first)
+    del first
+    gc.collect()
+    second = Counter(2)
+    embed_examples(second)
+    del second
+    gc.collect()
+    third = Counter(3)
+    embed_examples(third)
+    assert third.calls == 2
+
+
 def test_margin_is_respected():
     lookup = [[1.0, 0.0]]
     compare = [[0.98, 0.2]]
