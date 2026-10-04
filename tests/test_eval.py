@@ -19,6 +19,7 @@ from adapter.generation_adapter import GenerationAdapter
 from adapter.rerank_adapter import RerankerAdapter
 from rag.config import ROUTE_MODEL
 from rag.generate import generate
+from rag.manifest import active_build_id
 from rag.retrieve import retrieve
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,7 +99,8 @@ def test_fixed_set_retrieval_and_answers(capsys):
     embedder = EmbeddingAdapter()
     router = GenerationAdapter(model=ROUTE_MODEL)
     answerer = GenerationAdapter()
-    database = DatabaseAdapter(ROOT / "chroma")
+    db_path = ROOT / "chroma"
+    database = DatabaseAdapter(db_path, active_build_id(db_path))
     reranker = RerankerAdapter()
     rows = []
     for case in CASES:

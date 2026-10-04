@@ -16,12 +16,15 @@ def record(policy, version, heading, text):
         "parent_id": f"{policy}|{version}",
         "source": "policy.docx",
         "word_count": len(text.split()),
-        "embed": True,
+        "embed_text": f"{policy} {version}\n{heading}\n{text}",
+        "text_sha256": "text",
+        "embed_sha256": f"{policy}|{version}|{heading}",
+        "ordinal": None,
     }
 
 
 def store(path, rows, vectors):
-    database = DatabaseAdapter(path)
+    database = DatabaseAdapter(path, "testbuild")
     database.upsert(rows, vectors)
     return database
 
@@ -155,21 +158,6 @@ def test_lookup_can_name_a_policy_without_a_version(tmp_path):
     assert documents[0] == ["vacation days"]
 
 
-def test_aliases_collapse_to_one_heading(tmp_path):
-    rows = [
-        record("Time & Usage Policy", "2.0", "1. Purpose", "screen time"),
-        record("Time and Usage Policy", "2.0", "1. Purpose", "screen time copy"),
-    ]
-    found, _prompts, documents = ask(
-        tmp_path,
-        rows,
-        [[1.0, 0.0], [0.0, 1.0]],
-        ['{"kind":"lookup","policy":"","version":""}'],
-    )
-    assert documents[0] == ["screen time"]
-    assert found["hits"][0]["policy"] == "Time & Usage Policy"
-
-
 def test_compare_pairs_current_and_previous(tmp_path):
     rows = [
         record("HR Policy", "2.0", "3. Leave", "no dessert"),
@@ -226,7 +214,7 @@ def test_empty_collection_skips_the_answer_call(tmp_path, rag_logs):
         "cake",
         FakeEmbedder([1.0, 0.0]),
         model,
-        DatabaseAdapter(tmp_path / "chroma"),
+        DatabaseAdapter(tmp_path / "chroma", "testbuild"),
         reranker,
     )
     assert text["kind"] == "lookup"
@@ -285,6 +273,7 @@ def test_unknown_rerank_text_is_ignored():
 def test_main_prints_the_answer(monkeypatch, capsys):
     seen = {}
     monkeypatch.setattr("rag.retrieve.check_model_pin", lambda *args, **kwargs: None)
+    monkeypatch.setattr("rag.retrieve.active_build_id", lambda path: "testbuild")
 
     def fake_retrieve(question, embedder, model, database, reranker, n=3):
         seen["question"] = question
@@ -299,7 +288,7 @@ def test_main_prints_the_answer(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["retrieve.py", "who gets cake?"])
     monkeypatch.setattr("rag.retrieve.EmbeddingAdapter", lambda: "embedder")
     monkeypatch.setattr("rag.retrieve.GenerationAdapter", fake_adapter)
-    monkeypatch.setattr("rag.retrieve.DatabaseAdapter", lambda path: path)
+    monkeypatch.setattr("rag.retrieve.DatabaseAdapter", lambda path, build_id: path)
     monkeypatch.setattr("rag.retrieve.RerankerAdapter", lambda: "reranker")
     monkeypatch.setattr("rag.retrieve.retrieve", fake_retrieve)
     monkeypatch.setattr(
@@ -322,6 +311,7 @@ def test_main_prints_the_answer(monkeypatch, capsys):
 def test_main_uses_the_given_database(monkeypatch):
     seen = {}
     monkeypatch.setattr("rag.retrieve.check_model_pin", lambda *args, **kwargs: None)
+    monkeypatch.setattr("rag.retrieve.active_build_id", lambda path: "testbuild")
 
     def fake_retrieve(question, embedder, model, database, reranker, n=3):
         seen["database"] = database
@@ -329,7 +319,7 @@ def test_main_uses_the_given_database(monkeypatch):
 
     monkeypatch.setattr("rag.retrieve.EmbeddingAdapter", lambda: None)
     monkeypatch.setattr("rag.retrieve.GenerationAdapter", lambda model=None: None)
-    monkeypatch.setattr("rag.retrieve.DatabaseAdapter", lambda path: path)
+    monkeypatch.setattr("rag.retrieve.DatabaseAdapter", lambda path, build_id: path)
     monkeypatch.setattr("rag.retrieve.RerankerAdapter", lambda: None)
     monkeypatch.setattr("rag.retrieve.retrieve", fake_retrieve)
     monkeypatch.setattr("rag.retrieve.generate", lambda *args: "ok")

@@ -28,17 +28,10 @@ from rag.logutil import (
     silence_console,
     stage,
 )
+from rag.manifest import active_build_id
 from rag.model_pins import check_model_pin
+from rag.reader import version_key
 from rag.router import route
-
-ALIASES = {
-    "Time and Usage Policy": "Time & Usage Policy",
-    "Health Policy": "Health & Wellness Policy",
-}
-
-
-def canonicalize(name: str) -> str:
-    return ALIASES.get(name, name)
 
 
 def tokens(text: str) -> list[str]:
@@ -53,23 +46,6 @@ def catalog(rows: list[dict]) -> dict:
         name: tuple(sorted(versions, key=version_key))
         for name, versions in policies.items()
     }
-
-
-def version_key(version: str) -> tuple:
-    return tuple(int(part) for part in version.split("."))
-
-
-def fold(rows: list[dict]) -> list[dict]:
-    seen = set()
-    folded = []
-    for row in rows:
-        row = {**row, "policy": canonicalize(row["policy"])}
-        key = (row["policy"], row["version"], row["heading_path"])
-        if key in seen:
-            continue
-        seen.add(key)
-        folded.append(row)
-    return folded
 
 
 def lookup_pairs(policies: dict, policy: str, version: str) -> list[tuple]:
@@ -252,7 +228,7 @@ def top_ids(hits) -> str:
 
 def retrieve(question, embedder, model, database, reranker, n=RERANK_TOP_N) -> dict:
     with stage("database"):
-        rows = fold(database.rows())
+        rows = database.rows()
     policies = catalog(rows)
     with stage("router"):
         decision = route(question, model, policies)
@@ -331,7 +307,7 @@ def main(argv=None, trace: bool = False) -> int:
             question,
             embedder=EmbeddingAdapter(),
             model=router,
-            database=DatabaseAdapter(db_path),
+            database=DatabaseAdapter(db_path, active_build_id(db_path)),
             reranker=RerankerAdapter(),
         )
         text = generate(question, found["kind"], found["hits"], answerer)

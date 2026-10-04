@@ -1,11 +1,12 @@
 import ollama
 
-from rag.config import EMBED_DIM, EMBED_MODEL, OLLAMA_HOST
+from rag.config import EMBED_BATCH_SIZE, EMBED_DIM, EMBED_MODEL, OLLAMA_HOST
 from rag.logutil import log
 
 PREFIX = {
     "document": "title: none | text: ",
     "query": "task: search result | query: ",
+    "similarity": "task: sentence similarity | query: ",
 }
 
 
@@ -19,8 +20,15 @@ class EmbeddingAdapter:
             raise ValueError(task)
         if not texts:
             return []
+        result = []
+        for start in range(0, len(texts), EMBED_BATCH_SIZE):
+            batch = texts[start : start + EMBED_BATCH_SIZE]
+            result.extend(self._embed_batch(batch, task))
+        return result
+
+    def _embed_batch(self, texts: list[str], task: str) -> list[list[float]]:
         payloads = [PREFIX[task] + text for text in texts]
-        response = self.client.embed(model=self.model, input=payloads)
+        response = self.client.embed(model=self.model, input=payloads, truncate=False)
         vectors = (
             response["embeddings"]
             if isinstance(response, dict)

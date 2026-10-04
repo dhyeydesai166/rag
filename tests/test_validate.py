@@ -11,9 +11,11 @@ def _record(**overrides):
         "heading_path": "1. Purpose",
         "parent_id": "HR Policy|1.0",
         "source": "hr.pdf",
-        "embed_text": "HR Policy v1.0\n1. Purpose\nPurpose text",
+        "embed_text": "HR Policy 1.0\n1. Purpose\nPurpose text",
+        "text_sha256": "a" * 64,
+        "embed_sha256": "b" * 64,
         "word_count": 2,
-        "embed": True,
+        "ordinal": None,
     }
     base.update(overrides)
     return base

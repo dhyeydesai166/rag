@@ -11,7 +11,11 @@ def test_pinned_models_and_chroma_paths():
     assert config.GENERATE_MODEL_DIGESTS["gemma3:12b"] == "f4031aab637d"
     assert config.OLLAMA_HOST == "http://127.0.0.1:11434"
     assert config.CHROMA_PATH == "chroma"
-    assert config.COLLECTION_NAME == "policies"
+    assert config.COLLECTION_PREFIX == "policies"
+    assert config.CHUNK_MAX_TOKENS == 256
+    assert config.CHUNKER_VERSION == 2
+    assert config.EMBED_BATCH_SIZE == 64
+    assert config.TITLE_SEARCH_LINES == 5
     assert config.RRF_K == 60
     assert config.FUSED_TOP_K == 20
     assert config.RERANK_TOP_N == 3

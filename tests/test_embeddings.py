@@ -9,8 +9,8 @@ class FakeClient:
         self.calls = []
         self.width = width
 
-    def embed(self, model, input):
-        self.calls.append({"model": model, "input": input})
+    def embed(self, model, input, truncate=True):
+        self.calls.append({"model": model, "input": input, "truncate": truncate})
         return {
             "embeddings": [
                 [float(index)] + [1.0] * (self.width - 1)
@@ -46,3 +46,22 @@ def test_bad_task_raises():
 def test_wrong_dimension_is_rejected():
     with pytest.raises(ValueError, match="expected 768 dims, got 2"):
         EmbeddingAdapter(client=FakeClient(width=2)).embed(["x"], task="document")
+
+
+def test_embed_is_called_with_truncate_false():
+    client = FakeClient()
+    EmbeddingAdapter(client=client).embed(["alpha"], task="document")
+    assert client.calls[0]["truncate"] is False
+
+
+def test_similarity_task_uses_its_own_prefix():
+    client = FakeClient()
+    EmbeddingAdapter(client=client).embed(["alpha"], task="similarity")
+    assert client.calls[0]["input"][0].startswith("task: sentence similarity | query: ")
+
+
+def test_texts_are_embedded_in_batches(monkeypatch):
+    monkeypatch.setattr("adapter.embedding_adapter.EMBED_BATCH_SIZE", 2)
+    client = FakeClient()
+    EmbeddingAdapter(client=client).embed(["a", "b", "c"], task="document")
+    assert [len(call["input"]) for call in client.calls] == [2, 1]

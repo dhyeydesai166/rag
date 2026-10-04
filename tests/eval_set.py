@@ -49,7 +49,9 @@ CASES = [
     },
     {
         "question": "What is the recommended maximum caffeine per day?",
-        "chunks": ["Health Policy|1.0|5. Caffeine Guidelines > 5.1 Daily Limit"],
+        "chunks": [
+            "Health & Wellness Policy|1.0|5. Caffeine Guidelines > 5.1 Daily Limit"
+        ],
         "must_contain": ["400 mg"],
         "must_not_contain": ["500 mg"],
     },
@@ -59,7 +61,10 @@ CASES = [
             "complete, and how long is each one?"
         ),
         "chunks": [
-            "Health Policy|1.0|3. Gym Routine Requirements > 3.1 Minimum Requirement"
+            (
+                "Health & Wellness Policy|1.0|3. Gym Routine Requirements > "
+                "3.1 Minimum Requirement"
+            )
         ],
         "must_contain": ["three", "45 minutes"],
         "must_not_contain": ["one session"],
@@ -69,7 +74,7 @@ CASES = [
             "Under the Health Policy, are interns required to meet "
             "the gym-attendance minimum?"
         ),
-        "chunks": ["Health Policy|1.0|2. Scope"],
+        "chunks": ["Health & Wellness Policy|1.0|2. Scope"],
         "must_contain": ["interns", "exempt"],
         "must_not_contain": ["interns must attend"],
     },
@@ -77,9 +82,7 @@ CASES = [
         "question": (
             "How many minutes of video games may an employee play per workday?"
         ),
-        "chunks": [
-            "Time and Usage Policy|2.0|3. Video Game Time > 3.1 Daily Allowance"
-        ],
+        "chunks": ["Time & Usage Policy|2.0|3. Video Game Time > 3.1 Daily Allowance"],
         "must_contain": ["45 minutes"],
         "must_not_contain": ["90 minutes"],
     },
@@ -89,7 +92,7 @@ CASES = [
             "of a six-hour cycle?"
         ),
         "chunks": [
-            "Time and Usage Policy|2.0|6. Token Allocation > 6.1 Allocation Amount"
+            "Time & Usage Policy|2.0|6. Token Allocation > 6.1 Allocation Amount"
         ],
         "must_contain": ["500,000"],
         "must_not_contain": ["two million"],
@@ -100,7 +103,7 @@ CASES = [
             "at the start of each cycle?"
         ),
         "chunks": [
-            "Time and Usage Policy|1.0|5. Token Allocation > 5.1 Allocation Amount"
+            "Time & Usage Policy|1.0|5. Token Allocation > 5.1 Allocation Amount"
         ],
         "must_contain": ["1,000,000"],
         "must_not_contain": ["500,000"],
@@ -111,7 +114,7 @@ CASES = [
         ),
         "chunks": [
             (
-                "Time and Usage Policy|2.0|4. Foosball Time and the "
+                "Time & Usage Policy|2.0|4. Foosball Time and the "
                 "Winner-Takes-Tokens Rule > 4.2 Winner-Takes-Tokens Rule"
             )
         ],
@@ -159,8 +162,8 @@ CASES = [
             "the Time and Usage Policy?"
         ),
         "chunks": [
-            "Time and Usage Policy|2.0|3. Video Game Time > 3.1 Daily Allowance",
-            "Time and Usage Policy|1.0|3. Video Game Time > 3.1 Daily Allowance",
+            "Time & Usage Policy|2.0|3. Video Game Time > 3.1 Daily Allowance",
+            "Time & Usage Policy|1.0|3. Video Game Time > 3.1 Daily Allowance",
         ],
         "must_contain": ["45 minutes"],
         "must_not_contain": ["reduced to"],
