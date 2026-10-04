@@ -87,7 +87,7 @@ python -m evals.run_retrieval
 python -m evals.run_answers --runs 3
 ```
 
-`pytest` does not need Ollama or Cohere. The two eval commands do need Ollama and the pinned models. They write `results/retrieval_eval.json` and `results/answer_eval.json` (gitignored) with provenance: git sha, date, model digests, prompt names and hashes, and the index build id. CI runs the answer eval once on push and PR, and three times nightly (07:00 UTC) and on manual runs; results are uploaded as an artifact with provenance.
+`pytest` does not need Ollama or Cohere. The two eval commands do need Ollama and the pinned models. They write `results/retrieval_eval.json` and `results/answer_eval.json` (gitignored) with provenance: git sha, date, model digests, prompt names and hashes, and the index build id. CI runs the answer eval once on push and PR, and three times on a manual run; results are uploaded as an artifact with provenance.
 
 The retrieval command exits 1 if a case takes the wrong route or its gold chunks are missing from the fused shortlist. The final top 3 is a gate only when Cohere actually ranked. The answer command prints, per run:
 

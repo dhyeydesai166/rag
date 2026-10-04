@@ -4,9 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    # 07:00 UTC nightly. Three answer runs show drift that one run can hide.
-    - cron: "0 7 * * *"
   workflow_dispatch:
     inputs:
       runs:
@@ -15,7 +12,7 @@ on:
         default: "3"
 
 concurrency:
-  # Event in the key, so a push to main does not cancel the nightly run.
+  # Event in the key, so a push to main does not cancel a manual run.
   group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
@@ -102,7 +99,7 @@ jobs:
         env:
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
         run: python -m evals.run_retrieval
-      - name: Answer eval (report; 1 run on push/PR, 3 nightly and manual)
+      - name: Answer eval (report; 1 run on push/PR, 3 on manual)
         if: always()
         env:
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
