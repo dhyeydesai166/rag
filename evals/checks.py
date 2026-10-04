@@ -19,12 +19,34 @@ CHANGE_WORDS = re.compile(
 )
 
 
-def numbers_in(text: str) -> set[str]:
-    """Digit groups with thousands separators removed: '1,000,000' -> '1000000'."""
-    return {match.replace(",", "") for match in re.findall(r"\d[\d,]*(?:\.\d+)?", text)}
+def numbers_in(text: str, versions: frozenset[str] = frozenset()) -> set[str]:
+    """Digit groups with thousands separators removed: '1,000,000' -> '1000000'.
+
+    Known version labels ('2.0') are left out: naming a version is not a number
+    the passage has to contain.
+    """
+    found = {
+        match.replace(",", "") for match in re.findall(r"\d[\d,]*(?:\.\d+)?", text)
+    }
+    return found - versions
 
 
-def has_change_language(text: str) -> bool:
+def known_versions(retrieved: dict[str, dict]) -> frozenset[str]:
+    """Versions of the passages the answer model was shown."""
+    return frozenset(
+        passage["version"] for passage in retrieved.values() if passage.get("version")
+    )
+
+
+def has_change_language(text: str, own_version: str = "") -> bool:
+    """Change words, ignoring a mention of the cited passage's own version.
+
+    Why: 'In version 2.0 the limit is 45 minutes' citing a 2.0 passage says where
+    the rule lives; it does not describe a change.
+    """
+    if own_version:
+        own = rf"\bversion\s+{re.escape(own_version)}\b"
+        text = re.sub(own, "", text, flags=re.IGNORECASE)
     return bool(CHANGE_WORDS.search(text))
 
 
@@ -71,12 +93,13 @@ def check_answer(
     """Score one answer against its case with plain string and number checks."""
     misses: list[str] = []
     inventions: list[str] = []
+    versions = known_versions(retrieved)
     for claim in answer.claims:
         chunk = retrieved.get(claim.chunk_id)
         if chunk is None:
             inventions.append(f"cites a chunk that was not retrieved: {claim.chunk_id}")
             continue
-        extra = numbers_in(claim.text) - numbers_in(chunk["text"])
+        extra = numbers_in(claim.text, versions) - numbers_in(chunk["text"], versions)
         for number in sorted(extra):
             inventions.append(f"number {number} is not in {claim.chunk_id}")
         for fact in case["stale_facts"]:
@@ -88,7 +111,7 @@ def check_answer(
                 inventions.append(f"stale fact {fact!r}")
         if (
             route == "lookup"
-            and has_change_language(claim.text)
+            and has_change_language(claim.text, chunk.get("version", ""))
             and not has_change_language(chunk["text"])
         ):
             inventions.append(f"describes a change the source does not: {claim.text!r}")

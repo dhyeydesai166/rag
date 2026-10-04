@@ -93,6 +93,67 @@ def test_lookup_change_language_must_be_in_the_source():
     assert not any("describes a change" in item for item in allowed.inventions)
 
 
+def test_version_label_is_not_an_invented_number():
+    passage = {
+        "text": "Video game time remains unchanged at up to 45 minutes per workday, "
+        "taken in increments of no fewer than 15 minutes.",
+        "version": "2.0",
+    }
+    result = check_answer(
+        _answer("in version 2.0 the limit is 45 minutes"),
+        {"gold": passage},
+        "lookup",
+        _case(required_facts=[], stale_facts=[]),
+    )
+    assert result.inventions == []
+
+
+def test_numbers_in_skips_known_versions():
+    assert numbers_in("in version 2.0 the limit is 45", frozenset({"2.0"})) == {"45"}
+
+
+def test_other_numbers_are_still_checked_next_to_a_version():
+    passage = {
+        "text": "Video game time remains unchanged at up to 45 minutes per workday.",
+        "version": "2.0",
+    }
+    result = check_answer(
+        _answer("in version 2.0 the limit is 60 minutes"),
+        {"gold": passage},
+        "lookup",
+        _case(required_facts=[], stale_facts=[]),
+    )
+    assert result.inventions == ["number 60 is not in gold"]
+
+
+def test_an_unknown_version_is_still_an_invented_number():
+    passage = {
+        "text": "Video game time remains unchanged at up to 45 minutes per workday.",
+        "version": "2.0",
+    }
+    result = check_answer(
+        _answer("in version 3.0 the limit is 45 minutes"),
+        {"gold": passage},
+        "lookup",
+        _case(required_facts=[], stale_facts=[]),
+    )
+    assert any("number 3.0" in item for item in result.inventions)
+
+
+def test_naming_another_version_in_a_lookup_is_still_change_language():
+    passage = {
+        "text": "Video game time remains unchanged at up to 45 minutes per workday.",
+        "version": "2.0",
+    }
+    result = check_answer(
+        _answer("Unlike version 1.0, the limit is 45 minutes."),
+        {"gold": passage},
+        "lookup",
+        _case(required_facts=[], stale_facts=[]),
+    )
+    assert any("describes a change" in item for item in result.inventions)
+
+
 def test_compare_allows_change_language():
     result = check_answer(
         _answer("The allowance was reduced to 500,000."),
