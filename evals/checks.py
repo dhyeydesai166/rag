@@ -155,6 +155,7 @@ def check_answer(
     counterparts: dict[str, dict | None] | None = None,
     display_lines: list[str] | None = None,
     reranked: bool = True,
+    printed: str | None = None,
 ) -> CheckResult:
     """Score one answer against its case with plain string and number checks."""
     misses: list[str] = []
@@ -204,9 +205,15 @@ def check_answer(
         for index, text in enumerate(texts):
             if any(same_claim(text, earlier) for earlier in texts[:index]):
                 misses.append(f"repeated claim: {text!r}")
-    shown = " ".join(
-        [*(claim.text for claim in answer.claims), *(display_lines or [])]
-    ).lower()
+    if printed is None:
+        shown = " ".join(
+            [*(claim.text for claim in answer.claims), *(display_lines or [])]
+        )
+    else:
+        # The source list can name a section the sentence dropped. Score the
+        # paragraph the reader sees, before Sources.
+        shown = printed.split("\n\nSources", 1)[0]
+    shown = shown.lower()
     if not relax:
         for options in case["required_facts"]:
             if not any(option.lower() in shown for option in options):

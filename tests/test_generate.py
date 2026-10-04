@@ -342,8 +342,8 @@ def test_a_partial_restatement_stays_in_the_paragraph():
 
 
 def test_a_near_duplicate_claim_is_shown_once():
-    first = "Employees may play video games in the lounge area."
-    second = "Employees may play video games in the lounge room."
+    first = "Employees may play video games in the lounge."
+    second = "Employees may play video games in the lounge area."
     answer = Answer(
         status="answered",
         claims=[
@@ -353,15 +353,26 @@ def test_a_near_duplicate_claim_is_shown_once():
     )
     text = render(answer, _usage_sources("a", "b"))
     assert first in text
-    assert "lounge room" not in text
+    assert "lounge area" not in text
     assert same_claim(first, second)
 
 
 def test_lounge_rules_word_numbers_and_negation_are_kept():
     pairs = [
         ("Video games in the lounge.", "Foosball in the lounge."),
-        ("The employee gets five days.", "The employee gets two more days."),
+        (
+            "Employees are entitled to five days.",
+            "Employees are entitled to two more days if the pet is a dog.",
+        ),
+        (
+            "Employees get five days of paid time off.",
+            "Employees get six days of paid time off.",
+        ),
+        ("Cake is served.", "Cake is served only on Fridays."),
         ("Attendance is required.", "Attendance is not required."),
+        ("Employees cannot leave.", "Employees can leave."),
+        ("Employees must never leave.", "Employees must leave."),
+        ("Employees can't leave.", "Employees can leave."),
     ]
     for left, right in pairs:
         assert not same_claim(left, right)
@@ -515,12 +526,12 @@ def test_a_removed_section_is_named_in_the_printed_answer():
         model,
     )
     assert missing_side_lines(route, hits, {"old"}) == [
-        "Removed in version 2.0: Dispute Resolution"
+        "Removed in version 2.0: Foosball Time > Dispute Resolution"
     ]
     assert missing_side_lines(route, hits, set()) == []
     assert result.text.startswith(
         "The winner kept the table.\n"
-        "Removed in version 2.0: Dispute Resolution.\n\n"
+        "Removed in version 2.0: Foosball Time > Dispute Resolution.\n\n"
         "Sources\n"
     )
     assert "table.." not in result.text
@@ -612,8 +623,41 @@ def test_an_uncited_one_sided_pair_is_not_printed():
     assert "Winner-Takes-Tokens" not in result.text
     assert "Added in version" not in result.text
     assert missing_side_lines(route, [video, added], {"tokens"}) == [
-        "Added in version 2.0: Winner-Takes-Tokens Rule"
+        "Added in version 2.0: Foosball Time and the Winner-Takes-Tokens Rule > "
+        "Winner-Takes-Tokens Rule"
     ]
+
+
+def test_a_trailing_comma_does_not_gain_a_second_mark():
+    for raw in ("The final score,", "The final score;", "The final score:"):
+        answer = Answer(
+            status="answered",
+            claims=[Claim(text=raw, chunk_id="old")],
+        )
+        text = render(answer, _usage_sources("old"))
+        assert text.startswith("The final score.\n\nSources\n")
+        assert "score,." not in text
+        assert "score;." not in text
+        assert "score:." not in text
+
+
+def test_a_removal_line_the_model_already_wrote_is_not_repeated():
+    answer = Answer(
+        status="answered",
+        claims=[
+            Claim(
+                text="Removed in version 2.0: Dispute Resolution.",
+                chunk_id="old",
+            )
+        ],
+    )
+    text = render(
+        answer,
+        _usage_sources("old"),
+        notes=["removed in version 2.0: dispute resolution"],
+    )
+    assert text.count("Dispute Resolution") == 1
+    assert text.count("dispute resolution") == 0
 
 
 def test_a_sentence_without_punctuation_does_not_run_into_the_next_line():
@@ -644,11 +688,19 @@ def test_section_label_strips_a_new_in_version_suffix():
         section_label(
             "4. Foosball Time > 4.2 Winner-Takes-Tokens Rule — New in Version 2.0"
         )
-        == "Winner-Takes-Tokens Rule"
+        == "Foosball Time > Winner-Takes-Tokens Rule"
     )
     assert (
         section_label("4. Foosball Time > 4.2 Dispute Resolution")
-        == "Dispute Resolution"
+        == "Foosball Time > Dispute Resolution"
+    )
+    assert (
+        section_label("3. Video Game Time > 3.1 Daily Allowance")
+        == "Video Game Time > Daily Allowance"
+    )
+    assert (
+        section_label("4. Foosball Time > 4.1 Daily Allowance")
+        == "Foosball Time > Daily Allowance"
     )
     assert (
         section_label("8. Token Depletion — Consequences")

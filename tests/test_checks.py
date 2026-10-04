@@ -376,8 +376,8 @@ def test_removed_section_is_not_judged_by_the_compare_rule():
 
 
 def test_repeated_claim_is_a_miss_when_the_case_forbids_it():
-    first = "Employees may play video games in the lounge area."
-    second = "Employees may play video games in the lounge room."
+    first = "Employees may play video games in the lounge."
+    second = "Employees may play video games in the lounge area."
     result = check_answer(
         Answer(
             status="answered",
@@ -429,6 +429,21 @@ def test_a_partial_restatement_is_not_a_repeated_claim():
         ),
     )
     assert not any(item.startswith("repeated claim") for item in result.misses)
+
+
+def test_a_fact_dropped_from_the_printed_answer_is_a_miss():
+    case = _case(
+        gold_chunks=["gold"],
+        required_facts=[["five days"]],
+        stale_facts=[],
+    )
+    answer = _answer("Employees get five days. Employees get six days.")
+    retrieved = {"gold": {"text": "Employees get days.", "version": "2.0"}}
+    on_claims = check_answer(answer, retrieved, "lookup", case)
+    assert not any(item.startswith("missing fact") for item in on_claims.misses)
+    printed = "Employees get six days.\n\nSources\n[1] HR Policy 2.0, five days"
+    on_print = check_answer(answer, retrieved, "lookup", case, printed=printed)
+    assert any(item.startswith("missing fact") for item in on_print.misses)
 
 
 def test_a_removed_line_satisfies_the_removed_fact():

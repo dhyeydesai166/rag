@@ -16,11 +16,40 @@ from rag.models import Answer
 
 PROMPTS = Path(__file__).parent / "prompts"
 
-# Near-duplicate lookup sentences only. Half the words merged "video games in
-# the lounge" with "foosball in the lounge", "five days" with "two more days",
-# and "required" with "not required". Comparisons and conflicts do not use this.
+# Near-duplicate lookup sentences only. Overlap is both sentences together, so
+# a shorter sentence that only adds "only on Fridays" is not swallowed.
+# Comparisons and conflicts do not use this.
 REPEAT_WORD_OVERLAP = 0.8
-_NEGATION_WORDS = frozenset({"no", "not"})
+_NEGATION_WORDS = frozenset({"no", "not", "cannot", "never"})
+_NUMBER_WORDS = {
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+    "eleven": "11",
+    "twelve": "12",
+    "thirteen": "13",
+    "fourteen": "14",
+    "fifteen": "15",
+    "sixteen": "16",
+    "seventeen": "17",
+    "eighteen": "18",
+    "nineteen": "19",
+    "twenty": "20",
+    "thirty": "30",
+    "forty": "40",
+    "fifty": "50",
+    "sixty": "60",
+    "hundred": "100",
+    "thousand": "1000",
+    "million": "1000000",
+}
 _CONTENT_STOP = frozenset(
     "a an the of to for and or in on at by with from that this is are was be "
     "been it its their they who when should must may will can into upon than "
@@ -29,14 +58,24 @@ _CONTENT_STOP = frozenset(
 
 
 def _numbers(text: str) -> frozenset[str]:
-    """Digit groups with thousands separators removed: '1,000,000' -> '1000000'."""
-    return frozenset(
+    """Digit groups, and number words, as the same values.
+
+    '1,000,000' and 'five' both become number tokens, so 'five days' and
+    'six days' are not the same claim.
+    """
+    digits = {
         match.replace(",", "") for match in re.findall(r"\d[\d,]*(?:\.\d+)?", text)
-    )
+    }
+    words = set(re.findall(r"[a-z]+", text.lower()))
+    digits.update(_NUMBER_WORDS[word] for word in words if word in _NUMBER_WORDS)
+    return frozenset(digits)
 
 
 def _has_negation(text: str) -> bool:
-    words = set(re.findall(r"[a-z0-9]+", text.lower()))
+    lowered = text.lower()
+    if "n't" in lowered or "n’t" in lowered:
+        return True
+    words = set(re.findall(r"[a-z0-9]+", lowered))
     return bool(words & _NEGATION_WORDS)
 
 
@@ -44,10 +83,11 @@ def same_claim(left: str, right: str) -> bool:
     """True when two sentences state the same rule.
 
     Why: several passages often say one rule, and the model writes a sentence
-    for each. Different numbers are different facts, so '1,000,000 tokens' and
-    '500,000 tokens' are not the same claim. A sentence that uses 'not' or 'no'
-    is not the same claim as one that does not. Display of a comparison or a
-    conflict does not use this.
+    for each. Different numbers are different facts, whether written as digits
+    or as words. A negation ('not', 'no', 'cannot', 'never', or n't) is not the
+    same claim as its opposite. Overlap uses both sentences together, so a
+    short sentence is not dropped just because a longer one contains its words.
+    Display of a comparison or a conflict does not use this.
     """
     if _numbers(left) != _numbers(right):
         return False
@@ -55,14 +95,10 @@ def same_claim(left: str, right: str) -> bool:
         return False
     left_words = _content_words(left)
     right_words = _content_words(right)
-    if not left_words or not right_words:
-        return _content_words(left) == _content_words(right)
-    smaller, larger = (
-        (left_words, right_words)
-        if len(left_words) <= len(right_words)
-        else (right_words, left_words)
-    )
-    return len(smaller & larger) / len(smaller) >= REPEAT_WORD_OVERLAP
+    union = left_words | right_words
+    if not union:
+        return True
+    return len(left_words & right_words) / len(union) >= REPEAT_WORD_OVERLAP
 
 
 def _content_words(text: str) -> set[str]:
@@ -175,14 +211,24 @@ def parse_answer(raw: str) -> Answer:
         return Answer(status="not_in_sources", claims=[])
 
 
-def section_label(heading_path: str) -> str:
-    """'4. Foosball Time > 4.2 Dispute Resolution' -> 'Dispute Resolution'.
+def _clean_heading_part(part: str) -> str:
+    return TITLE_SUFFIX.sub("", SECTION_NUMBER.sub("", part)).strip()
 
-    Strips a trailing 'Updated' or 'New in Version N' suffix from the leaf,
+
+def section_label(heading_path: str) -> str:
+    """'4. Foosball Time > 4.2 Dispute Resolution'
+    -> 'Foosball Time > Dispute Resolution'.
+
+    Keeps the parent so 'Daily Allowance' is not both video games and foosball.
+    Strips a trailing 'Updated' or 'New in Version N' suffix from each part,
     the same way title pairing does.
     """
-    leaf = heading_path.split(" > ")[-1]
-    return TITLE_SUFFIX.sub("", SECTION_NUMBER.sub("", leaf)).strip()
+    parts = []
+    for part in heading_path.split(" > "):
+        cleaned = _clean_heading_part(part)
+        if cleaned:
+            parts.append(cleaned)
+    return " > ".join(parts)
 
 
 def missing_side_lines(route: dict, hits: list[dict], cited_ids: set[str]) -> list[str]:
@@ -212,9 +258,21 @@ def missing_side_lines(route: dict, hits: list[dict], cited_ids: set[str]) -> li
     return lines
 
 
+def _plain(text: str) -> str:
+    """Lowercase words and digits, so case and punctuation do not count."""
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+
 def _with_period(text: str) -> str:
-    """End a printed sentence with a period unless it already ends."""
+    """End a printed sentence with one period.
+
+    A trailing comma, semicolon, or colon is removed first, so 'score,' becomes
+    'score.' rather than 'score,.'.
+    """
     stripped = text.strip()
+    if not stripped or stripped[-1] in ".?!":
+        return stripped
+    stripped = stripped.rstrip(",;:").rstrip()
     if not stripped or stripped[-1] in ".?!":
         return stripped
     return f"{stripped}."
@@ -250,7 +308,8 @@ def render(
         if claim.chunk_id not in seen:
             seen.add(claim.chunk_id)
             cited.append(source)
-    kept_notes = [note for note in (notes or []) if note not in sentences]
+    already = {_plain(sentence) for sentence in sentences}
+    kept_notes = [note for note in (notes or []) if _plain(note) not in already]
     if not sentences and not kept_notes:
         return NOT_IN_SOURCES_MESSAGE
     if answer.status == "conflicting":

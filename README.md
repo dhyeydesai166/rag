@@ -8,7 +8,7 @@ A question-answering tool over the policy documents in `docs/`: HR, Health & Wel
 
 **Retrieval.** Clean the question in code, reject junk, and extract policy and version filters in code. Decide lookup versus compare by comparing the question's embedding to a few example questions. Then run dense search (Chroma) and BM25 on the same filtered chunks, fuse the ranks with reciprocal rank fusion (k=60), and rerank the shortlist with Cohere. If Cohere is missing or fails, the fused order is used and a warning is logged. A comparison runs that search once per version and pairs sections by normalized title.
 
-**Generation.** Pick the lookup or compare prompt file, wrap passages in `<source>` tags, pass the original question and the route the code chose, and ask Ollama for JSON (`status` plus claims, each with a `chunk_id`). The printed answer is those claims as plain sentences, each ending with a period, a blank line, then the sources. A later lookup sentence is dropped only when it nearly repeats an earlier one: about 80% of the shorter sentence's content words, the same numbers, and the same presence or absence of "not" or "no". Comparisons and conflicts keep every sentence. A comparison pair with one side missing adds its own line, such as "Removed in version 2.0: Dispute Resolution", when the answer cites the side that exists; the answer check counts that line.
+**Generation.** Pick the lookup or compare prompt file, wrap passages in `<source>` tags, pass the original question and the route the code chose, and ask Ollama for JSON (`status` plus claims, each with a `chunk_id`). The printed answer is those claims as plain sentences, each ending with a period, a blank line, then the sources. A later lookup sentence is dropped only when it nearly repeats an earlier one: about 80% of the words in both sentences together, the same numbers (digits or words such as five and six), and the same presence or absence of a negation (`not`, `no`, `cannot`, `never`, or `n't`). Comparisons and conflicts keep every sentence. A comparison pair with one side missing adds its own line, such as "Removed in version 2.0: Foosball Time > Dispute Resolution", when the answer cites the side that exists; the answer check counts that line.
 
 ```mermaid
 flowchart LR
@@ -92,7 +92,7 @@ python -m evals.run_answers --runs 3
 The retrieval command exits 1 if a case takes the wrong route or its gold chunks are missing from the fused shortlist. The final top 3 is a gate only when Cohere actually ranked. `refrigerator-shelter` is scored only when Cohere ranked: without a key its top 3 are HR refrigerator chunks, not the preparedness shelter section. When it is not scored, the answer-eval row is marked skipped and is not counted as a clean case. The answer command prints, per run:
 
 ```
-run  misses  inventions  clean_cases  route_ok
+run  misses  inventions  clean_cases  route_ok  skipped
 ```
 
 A **miss** is something required that the answer left out (a fact, a gold citation, or a refusal when an answer was expected), or a change claimed between two versions that say the same thing. An **invention** is something the answer said that the cited passage does not support (a number, a stale fact from another version, change language the source does not use, or an answer when the documents do not cover the question). Do not edit a case in `evals/cases.py` to match a model's output. Gold describes the documents. If a case is wrong about a document, fix it in its own commit that quotes the source text.

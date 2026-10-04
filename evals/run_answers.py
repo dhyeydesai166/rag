@@ -43,6 +43,7 @@ def score_case(case: dict, found: dict, model) -> dict:
         counterparts_by_id(found["kind"], found["hits"]),
         display_lines=lines,
         reranked=bool(found.get("reranked")),
+        printed=generated.text,
     )
     return {
         "id": case["id"],
@@ -77,7 +78,8 @@ def totals(rows: list[dict]) -> dict:
 def format_totals(run: int, summary: dict) -> str:
     return (
         f"{run:>3}  {summary['misses']:>7}  {summary['inventions']:>11}  "
-        f"{summary['clean_cases']:>11}  {summary['route_ok']:>8}"
+        f"{summary['clean_cases']:>11}  {summary['route_ok']:>8}  "
+        f"{summary.get('skipped', 0):>7}"
     )
 
 
@@ -98,7 +100,7 @@ def main(argv=None) -> int:
     build_id = manifest.get("active_build_id") or ""
     build = {**manifest.get("builds", {}).get(build_id, {}), "build_id": build_id}
     runs = []
-    print("run  misses  inventions  clean_cases  route_ok")
+    print("run  misses  inventions  clean_cases  route_ok  skipped")
     for number in range(1, args.runs + 1):
         rows = []
         for index, case in enumerate(CASES):
