@@ -263,6 +263,45 @@ def _plain(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
+def _has_phrase(haystack: str, phrase: str) -> bool:
+    return f" {phrase} " in f" {haystack} "
+
+
+def _side_note_parts(note: str) -> tuple[str, str] | None:
+    """'Removed in version 2.0: Parent > Leaf' -> the phrase and the leaf."""
+    lowered = note.strip().lower()
+    for kind in ("removed in version ", "added in version "):
+        if not lowered.startswith(kind):
+            continue
+        version, sep, label = note.strip()[len(kind) :].partition(":")
+        leaf = label.strip().split(" > ")[-1]
+        if not sep or not version.strip() or not leaf:
+            return None
+        return f"{kind}{version.strip()}", leaf
+    return None
+
+
+def _note_already_said(note: str, sentences: list[str]) -> bool:
+    """True when a sentence already states this added or removed line.
+
+    The printed label includes the parent, and the model often names only the
+    leaf. 'Removed in version 2.0: Dispute Resolution.' already says the note
+    'Removed in version 2.0: Foosball Time > Dispute Resolution'.
+    """
+    plains = [_plain(sentence) for sentence in sentences]
+    if _plain(note) in plains:
+        return True
+    parts = _side_note_parts(note)
+    if parts is None:
+        return False
+    phrase, leaf = _plain(parts[0]), _plain(parts[1])
+    if not phrase or not leaf:
+        return False
+    return any(
+        _has_phrase(plain, phrase) and _has_phrase(plain, leaf) for plain in plains
+    )
+
+
 def _with_period(text: str) -> str:
     """End a printed sentence with one period.
 
@@ -308,8 +347,9 @@ def render(
         if claim.chunk_id not in seen:
             seen.add(claim.chunk_id)
             cited.append(source)
-    already = {_plain(sentence) for sentence in sentences}
-    kept_notes = [note for note in (notes or []) if _plain(note) not in already]
+    kept_notes = [
+        note for note in (notes or []) if not _note_already_said(note, sentences)
+    ]
     if not sentences and not kept_notes:
         return NOT_IN_SOURCES_MESSAGE
     if answer.status == "conflicting":

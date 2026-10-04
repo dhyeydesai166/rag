@@ -642,6 +642,30 @@ def test_a_trailing_comma_does_not_gain_a_second_mark():
 
 
 def test_a_removal_line_the_model_already_wrote_is_not_repeated():
+    cases = [
+        (
+            "Removed in version 2.0: Dispute Resolution.",
+            "Removed in version 2.0: Foosball Time > Dispute Resolution",
+            "Dispute Resolution",
+        ),
+        (
+            "Added in version 2.0: Winner-Takes-Tokens Rule.",
+            "Added in version 2.0: Foosball Time > Winner-Takes-Tokens Rule",
+            "Winner-Takes-Tokens Rule",
+        ),
+    ]
+    for sentence, note, leaf in cases:
+        answer = Answer(
+            status="answered",
+            claims=[Claim(text=sentence, chunk_id="old")],
+        )
+        text = render(answer, _usage_sources("old"), notes=[note])
+        assert text.count("in version 2.0") == 1
+        assert leaf in text
+        assert "Foosball Time" not in text
+
+
+def test_a_different_removed_section_is_still_named():
     answer = Answer(
         status="answered",
         claims=[
@@ -654,10 +678,10 @@ def test_a_removal_line_the_model_already_wrote_is_not_repeated():
     text = render(
         answer,
         _usage_sources("old"),
-        notes=["removed in version 2.0: dispute resolution"],
+        notes=["Removed in version 2.0: Video Game Time > Daily Allowance"],
     )
-    assert text.count("Dispute Resolution") == 1
-    assert text.count("dispute resolution") == 0
+    assert "Dispute Resolution" in text
+    assert "Video Game Time > Daily Allowance" in text
 
 
 def test_a_sentence_without_punctuation_does_not_run_into_the_next_line():
