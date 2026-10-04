@@ -1,4 +1,4 @@
-from rag.provenance import git_sha, provenance
+from rag.provenance import ci_run, git_sha, provenance
 
 
 def test_git_sha_adds_dirty_when_the_worktree_is_not_clean(monkeypatch):
@@ -39,3 +39,19 @@ def test_provenance_records_prompts_models_and_the_build(monkeypatch):
     assert record["seed"] == 42
     assert set(record["prompts"]) == {"lookup_v2", "compare_v2"}
     assert record["ollama_version"] == "0.0.0"
+
+
+def test_ci_run_is_empty_outside_ci(monkeypatch):
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
+    assert ci_run() == {}
+
+
+def test_ci_run_links_to_the_actions_run(monkeypatch):
+    monkeypatch.setenv("GITHUB_RUN_ID", "42")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/rag")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "schedule")
+    monkeypatch.delenv("GITHUB_SERVER_URL", raising=False)
+    assert ci_run() == {
+        "event": "schedule",
+        "run_url": "https://github.com/owner/rag/actions/runs/42",
+    }

@@ -104,7 +104,11 @@ def main(argv=None) -> int:
         summary = totals(rows)
         runs.append({"run": number, "totals": summary, "cases": rows})
         print(format_totals(number, summary))
-    payload = {"provenance": provenance(client, build), "runs": runs}
+    payload = {
+        "provenance": provenance(client, build),
+        "runs_requested": args.runs,
+        "runs": runs,
+    }
     RESULTS.mkdir(exist_ok=True)
     (RESULTS / "answer_eval.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"

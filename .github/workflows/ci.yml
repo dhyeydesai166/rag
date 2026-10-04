@@ -4,10 +4,19 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # 07:00 UTC nightly. Three answer runs show drift that one run can hide.
+    - cron: "0 7 * * *"
   workflow_dispatch:
+    inputs:
+      runs:
+        description: "Answer eval runs"
+        required: false
+        default: "3"
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Event in the key, so a push to main does not cancel the nightly run.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -93,15 +102,17 @@ jobs:
         env:
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
         run: python -m evals.run_retrieval
-      - name: Answer eval (report, 1 run)
+      - name: Answer eval (report; 1 run on push/PR, 3 nightly and manual)
         if: always()
         env:
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
-        run: python -m evals.run_answers --runs 1
+          ANSWER_RUNS: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '1' || inputs.runs || '3' }}
+        run: python -m evals.run_answers --runs "$ANSWER_RUNS"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: eval-results-${{ github.sha }}
+          name: eval-results-${{ github.event_name }}-${{ github.run_id }}
+          retention-days: 30
           path: |
             results/retrieval_eval.json
             results/answer_eval.json

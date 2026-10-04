@@ -1,6 +1,7 @@
 """Facts needed to reproduce an eval result."""
 
 import json
+import os
 import platform
 import subprocess
 import urllib.error
@@ -59,6 +60,22 @@ def ollama_server_version() -> str:
         return "unknown"
 
 
+def ci_run() -> dict:
+    """Which CI run produced a result, so a downloaded artifact can be traced back.
+
+    Empty outside CI.
+    """
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    if not run_id:
+        return {}
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    repository = os.environ.get("GITHUB_REPOSITORY", "")
+    return {
+        "event": os.environ.get("GITHUB_EVENT_NAME", ""),
+        "run_url": f"{server}/{repository}/actions/runs/{run_id}",
+    }
+
+
 def provenance(client, build: dict) -> dict:
     """Facts needed to reproduce a result: code, models, prompts, index, date."""
     return {
@@ -82,4 +99,5 @@ def provenance(client, build: dict) -> dict:
         "seed": GENERATION_SEED,
         "ollama_version": ollama_server_version(),
         "python": platform.python_version(),
+        "ci": ci_run(),
     }
