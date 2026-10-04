@@ -95,7 +95,7 @@ The retrieval command exits 1 if a case takes the wrong route or its gold chunks
 run  misses  inventions  clean_cases  route_ok
 ```
 
-A **miss** is something required that the answer left out (a fact, a gold citation, or a refusal when an answer was expected). An **invention** is something the answer said that the cited passage does not support (a number, a stale fact from another version, change language the source does not use, or an answer when the documents do not cover the question). Do not edit a case in `evals/cases.py` to match a model's output. Gold describes the documents. If a case is wrong about a document, fix it in its own commit that quotes the source text.
+A **miss** is something required that the answer left out (a fact, a gold citation, or a refusal when an answer was expected), or a change claimed between two versions that say the same thing. An **invention** is something the answer said that the cited passage does not support (a number, a stale fact from another version, change language the source does not use, or an answer when the documents do not cover the question). Do not edit a case in `evals/cases.py` to match a model's output. Gold describes the documents. If a case is wrong about a document, fix it in its own commit that quotes the source text.
 
 ## Configuration
 

@@ -1,7 +1,9 @@
 from evals.checks import (
     check_answer,
+    counterparts_by_id,
     has_change_language,
     numbers_in,
+    passages_by_id,
     retrieval_hit,
 )
 from evals.run_answers import totals
@@ -232,3 +234,144 @@ def test_totals_count_misses_and_inventions_separately():
         "clean_cases": 1,
         "route_ok": 2,
     }
+
+
+VIDEO_V1 = {
+    "id": "Time & Usage Policy|1.0|3. Video Game Time > 3.1 Daily Allowance",
+    "version": "1.0",
+    "text": "Employees may play video games for up to 45 minutes per workday, taken in "
+    "increments of no fewer than 15 minutes at a time. This minimum-increment rule "
+    'exists because of the well-documented "quick five minutes" spiral logged '
+    "repeatedly in prior incident reports, in which a five-minute break reliably "
+    "metastasized into ninety.",
+}
+VIDEO_V2 = {
+    "id": "Time & Usage Policy|2.0|3. Video Game Time > 3.1 Daily Allowance",
+    "version": "2.0",
+    "text": "Video game time remains unchanged at up to 45 minutes per workday, "
+    "taken in increments of no fewer than 15 minutes.",
+}
+VIDEO_PAIR = [
+    {
+        "policy": "Time & Usage Policy",
+        "title": "video game time > daily allowance",
+        "previous": VIDEO_V1,
+        "current": VIDEO_V2,
+    }
+]
+TOKEN_V1 = {
+    "id": "Time & Usage Policy|1.0|5. Token Allocation > 5.1 Allocation Amount",
+    "version": "1.0",
+    "text": "Every employee is issued 1,000,000 (one million) tokens at the start of "
+    "each six-hour cycle, replenished automatically. Tokens are the operating "
+    "currency of this company: they are spent on tasks, deliverables, deep thoughts, "
+    "and, in at least one logged case, a ninety-minute internal debate about whether "
+    "a hot dog qualifies as a sandwich.",
+}
+TOKEN_V2 = {
+    "id": "Time & Usage Policy|2.0|6. Token Allocation > 6.1 Allocation Amount",
+    "version": "2.0",
+    "text": "Every employee is issued 500,000 (five hundred thousand) tokens at the "
+    "start of each six-hour cycle, replenished automatically — a reduction from the "
+    '1,000,000 issued under Version 1.0. Finance has described this adjustment as '
+    '"necessary" and "overdue."',
+}
+TOKEN_PAIR = [
+    {
+        "policy": "Time & Usage Policy",
+        "title": "token allocation > allocation amount",
+        "previous": TOKEN_V1,
+        "current": TOKEN_V2,
+    }
+]
+
+
+def _compare(text: str, chunk_id: str = VIDEO_V2["id"], hits: list | None = None):
+    pair = hits if hits is not None else VIDEO_PAIR
+    answer = Answer(status="answered", claims=[Claim(text=text, chunk_id=chunk_id)])
+    return check_answer(
+        answer,
+        passages_by_id("compare", pair),
+        "compare",
+        _case(gold_chunks=[], required_facts=[], stale_facts=[]),
+        counterparts_by_id("compare", pair),
+    )
+
+
+def test_video_game_increase_claim_is_a_miss():
+    result = _compare(
+        "Video game time was increased to 45 minutes per workday in version 2.0."
+    )
+    assert result.inventions == []
+    assert len(result.misses) == 1
+    assert "both versions give the same numbers" in result.misses[0]
+
+
+def test_unchanged_claim_is_not_a_miss():
+    result = _compare(
+        "Video game time remains unchanged at up to 45 minutes per workday."
+    )
+    assert result.misses == []
+
+
+def test_not_changed_is_not_a_change_claim():
+    result = _compare("The rule has not changed.")
+    assert result.misses == []
+
+
+def test_change_claim_on_identical_text_is_a_miss():
+    old = {"id": "a", "version": "1.0", "text": "The limit is 45 minutes."}
+    new = {"id": "b", "version": "2.0", "text": "The limit is 45 minutes!"}
+    result = _compare(
+        "The rule was changed.",
+        chunk_id="b",
+        hits=[{"previous": old, "current": new}],
+    )
+    assert len(result.misses) == 1
+    assert "same text" in result.misses[0]
+
+
+def test_real_token_reduction_is_not_a_miss():
+    claims = [
+        "Every employee was issued 1,000,000 tokens in version 1.0, "
+        "but 500,000 tokens in version 2.0.",
+        "Tokens were reduced from 1,000,000 to 500,000.",
+    ]
+    for text in claims:
+        result = _compare(text, chunk_id=TOKEN_V2["id"], hits=TOKEN_PAIR)
+        assert result.misses == []
+        assert result.inventions == []
+
+
+def test_removed_section_is_not_judged_by_the_compare_rule():
+    old = {
+        "id": "dispute",
+        "version": "1.0",
+        "text": "Disputes are settled by the pod leader.",
+    }
+    result = _compare(
+        "The dispute rule was removed.",
+        chunk_id="dispute",
+        hits=[{"previous": old, "current": None}],
+    )
+    assert not any(item.startswith("claims a change") for item in result.misses)
+
+
+def test_lookup_answers_ignore_counterparts():
+    answer = Answer(
+        status="answered",
+        claims=[
+            Claim(
+                text="Video game time was increased to 45 minutes per workday.",
+                chunk_id=VIDEO_V2["id"],
+            )
+        ],
+    )
+    result = check_answer(
+        answer,
+        passages_by_id("compare", VIDEO_PAIR),
+        "lookup",
+        _case(gold_chunks=[], required_facts=[], stale_facts=[]),
+        counterparts_by_id("compare", VIDEO_PAIR),
+    )
+    assert not any(item.startswith("claims a change") for item in result.misses)

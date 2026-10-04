@@ -17,6 +17,23 @@ CHANGE_WORDS = re.compile(
     r"version \d+)\b",
     re.IGNORECASE,
 )
+# A claim says something changed. '\b' keeps 'unchanged' from matching 'chang'.
+COMPARE_CHANGE_WORDS = re.compile(
+    r"\b(chang\w*|increas\w*|decreas\w*|reduc\w*|rais\w*|lower\w*|added|"
+    r"remov\w*|replac\w*|extend\w*|shorten\w*|no longer)\b",
+    re.IGNORECASE,
+)
+# Wording that says there was no change, so 'has not changed' is not a change claim.
+NO_CHANGE_WORDS = re.compile(
+    r"\b(unchanged|not chang\w*|no change\w*|did not change|remain\w*|same|"
+    r"both versions)\b",
+    re.IGNORECASE,
+)
+# Change words about an amount; only these are judged by comparing numbers.
+AMOUNT_CHANGE_WORDS = re.compile(
+    r"\b(increas\w*|decreas\w*|reduc\w*|rais\w*|lower\w*|extend\w*|shorten\w*)\b",
+    re.IGNORECASE,
+)
 
 
 def numbers_in(text: str, versions: frozenset[str] = frozenset()) -> set[str]:
@@ -68,6 +85,48 @@ def retrieved_ids(kind: str, hits: list[dict]) -> list[str]:
     return found
 
 
+def counterparts_by_id(kind: str, hits: list[dict]) -> dict[str, dict | None]:
+    """Map each comparison passage id to the other version in its pair."""
+    if kind != "compare":
+        return {}
+    found: dict[str, dict | None] = {}
+    for pair in hits:
+        old, new = pair.get("previous"), pair.get("current")
+        if old:
+            found[old["id"]] = new
+        if new:
+            found[new["id"]] = old
+    return found
+
+
+def asserts_change(text: str) -> bool:
+    return bool(COMPARE_CHANGE_WORDS.search(text)) and not NO_CHANGE_WORDS.search(text)
+
+
+def normalized(text: str) -> str:
+    """Lowercase words and digits only, so punctuation and spacing do not count."""
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def same_in_both_versions(
+    claim_text: str, cited: dict, other: dict | None, versions: frozenset[str]
+) -> str | None:
+    """Why a change claim is contradicted by its two passages, or None.
+
+    Why: a model can say 'increased' about a rule both versions state the same
+    way; prompt wording did not stop it, so the eval must count it.
+    """
+    if other is None or not asserts_change(claim_text):
+        return None
+    if normalized(cited["text"]) == normalized(other["text"]):
+        return "both versions have the same text"
+    if AMOUNT_CHANGE_WORDS.search(claim_text):
+        numbers = numbers_in(cited["text"], versions)
+        if numbers and numbers == numbers_in(other["text"], versions):
+            return "both versions give the same numbers"
+    return None
+
+
 def passages_by_id(kind: str, hits: list[dict]) -> dict[str, dict]:
     """Cited-text lookup for the chunks the answer model was shown."""
     if kind != "compare":
@@ -88,7 +147,11 @@ class CheckResult:
 
 
 def check_answer(
-    answer: Answer, retrieved: dict[str, dict], route: str, case: dict
+    answer: Answer,
+    retrieved: dict[str, dict],
+    route: str,
+    case: dict,
+    counterparts: dict[str, dict | None] | None = None,
 ) -> CheckResult:
     """Score one answer against its case with plain string and number checks."""
     misses: list[str] = []
@@ -115,6 +178,12 @@ def check_answer(
             and not has_change_language(chunk["text"])
         ):
             inventions.append(f"describes a change the source does not: {claim.text!r}")
+        if route == "compare" and claim.chunk_id in (counterparts or {}):
+            reason = same_in_both_versions(
+                claim.text, chunk, counterparts[claim.chunk_id], versions
+            )
+            if reason:
+                misses.append(f"claims a change, but {reason}: {claim.text!r}")
     if answer.status != case["expect_status"]:
         bucket = inventions if answer.status == "answered" else misses
         bucket.append(f"status {answer.status}, expected {case['expect_status']}")

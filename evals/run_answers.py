@@ -14,7 +14,7 @@ from adapter.embedding_adapter import EmbeddingAdapter
 from adapter.generation_adapter import GenerationAdapter
 from adapter.rerank_adapter import make_reranker
 from evals.cases import CASES
-from evals.checks import check_answer, passages_by_id
+from evals.checks import check_answer, counterparts_by_id, passages_by_id
 from rag.config import ANSWER_EVAL_RUNS, OLLAMA_HOST
 from rag.generate import generate
 from rag.manifest import load_manifest
@@ -35,6 +35,7 @@ def score_case(case: dict, found: dict, model) -> dict:
         passages_by_id(found["kind"], found["hits"]),
         found["kind"],
         case,
+        counterparts_by_id(found["kind"], found["hits"]),
     )
     return {
         "id": case["id"],
