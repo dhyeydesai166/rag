@@ -739,5 +739,5 @@ def test_lookup_prompt_states_a_base_amount():
 
 def test_prompt_files_ship_with_the_package():
     root = files("rag")
-    for name in ("lookup_v1.txt", "compare_v1.txt"):
+    for name in ("lookup_v1.md", "compare_v1.md"):
         assert root.joinpath("prompts", name).is_file()

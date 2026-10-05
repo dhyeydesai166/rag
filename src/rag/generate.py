@@ -110,8 +110,8 @@ def _content_words(text: str) -> set[str]:
 
 
 def load_prompt(name: str) -> str:
-    """Read a prompt file shipped with the package (src/rag/prompts/<name>.txt)."""
-    return (PROMPTS / f"{name}.txt").read_text(encoding="utf-8")
+    """Read a prompt file shipped with the package (src/rag/prompts/<name>.md)."""
+    return (PROMPTS / f"{name}.md").read_text(encoding="utf-8")
 
 
 def prompt_sha256(name: str) -> str:
